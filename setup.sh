@@ -32,7 +32,7 @@ else
 fi
 
 # 4. Dependencies.
-npm install openai papaparse zod recharts react-force-graph-2d \
+npm install @google/genai papaparse zod recharts react-force-graph-2d \
   @radix-ui/react-switch @radix-ui/react-dialog @radix-ui/react-tooltip
 npm install -D @types/papaparse tsx
 
@@ -49,8 +49,9 @@ cp -R "$SCRIPT_DIR/overlay/." .
 # Script to run the live test with .env.local loaded.
 npm pkg set scripts.test:qloo="tsx --env-file=.env.local scripts/test-qloo.ts"
 
-# 9. .gitignore. The default ".env*" rule also hides .env.local.example, so re-allow it.
+# 9. .gitignore. The default ".env*" rule also hides .env.example, so re-allow it.
 grep -qx '.env.local' .gitignore || printf '\n.env.local\n' >> .gitignore
+grep -qx '!.env.example' .gitignore || printf '!.env.example\n' >> .gitignore
 grep -qx '!.env.local.example' .gitignore || printf '!.env.local.example\n' >> .gitignore
 
 echo
@@ -58,7 +59,7 @@ echo "Setup finished. Dev script:"
 grep '"dev"' package.json
 echo
 echo "Next:"
-echo "  cp .env.local.example .env.local   # then put your key in QLOO_API_KEY"
-echo "  npm run test:qloo                  # live call; paste the output back"
-echo "  npx tsx scripts/reality-check.ts   # Phase 2: full live pipeline; paste the whole output back"
+echo "  cp .env.example .env.local   # then put your keys in QLOO_API_KEY and GEMINI_API_KEY"
+echo "  npm run test:qloo            # live call; paste the output back"
+echo "  npx tsx scripts/reality-check.ts # Phase 2: full live pipeline; paste the whole output back"
 echo "  npm run dev                        # log should say (Turbopack)"
