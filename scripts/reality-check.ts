@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import Papa from "papaparse";
 import { runAgent, type AgentTrace } from "../lib/agent";
+import { parseCatalogCsv } from "../lib/schemas";
 import type { Product } from "../lib/types";
 
 // End-to-end run against the LIVE Qloo API. No LLM is called.
@@ -17,20 +17,11 @@ if (!process.env.QLOO_API_KEY && existsSync(".env.local")) {
 
 function loadCatalog(): Product[] {
   const path = join(process.cwd(), "public", "demo-catalog.csv");
-  const parsed = Papa.parse<Record<string, string>>(readFileSync(path, "utf8"), {
-    header: true,
-    skipEmptyLines: true,
-  });
-  if (parsed.errors.length > 0) {
-    throw new Error(`demo-catalog.csv parse errors: ${JSON.stringify(parsed.errors)}`);
+  const result = parseCatalogCsv(readFileSync(path, "utf8"));
+  if (!result.ok) {
+    throw new Error(`demo-catalog.csv is invalid: ${JSON.stringify(result.issues, null, 2)}`);
   }
-  return parsed.data.map((row, i) => {
-    const { name, category, description } = row;
-    if (!name || !category || !description) {
-      throw new Error(`demo-catalog.csv row ${i + 2} is missing name, category or description`);
-    }
-    return { name, category, description };
-  });
+  return result.products;
 }
 
 function section(title: string): void {
@@ -47,7 +38,7 @@ async function main(): Promise<void> {
 
   console.log("\n--- live run (Qloo call log + stage logs) ---");
   const trace: Partial<AgentTrace> = {};
-  const recommendations = await runAgent(products, trace);
+  const recommendations = await runAgent(products, { trace });
   console.log("--- end of run log ---");
 
   const { resolved, signals, candidates } = trace;

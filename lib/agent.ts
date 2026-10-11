@@ -48,10 +48,43 @@ const TOP_RECOMMENDATIONS = 3;
 const TOP_SUPPORTING_SIGNALS = 5;
 const MIN_SUPPORTING_SIGNALS = 2; // Phase 2 acceptance: every rec has >= 2
 
+// Max Qloo requests in flight at once (Phase 3: kept at 3 to avoid Qloo 429 rate limits).
+const QLOO_CONCURRENCY = 3;
+
 // ---------- Helpers ----------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * Bounded-parallel map. Results keep input order, so downstream merging is
+ * deterministic regardless of which request finishes first. The first
+ * rejection stops new work from starting and is rethrown.
+ */
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const i = next++;
+      try {
+        results[i] = await fn(items[i], i);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return results;
 }
 
 function normalize(text: string): string {
@@ -142,13 +175,14 @@ interface ResolveAttempt {
 async function attemptResolve(
   query: string,
   type: string,
+  signal?: AbortSignal,
 ): Promise<ResolveAttempt | "rejected" | null> {
   let response: QlooSearchResponse;
   try {
-    response = await resolveEntity(query, type);
+    response = await resolveEntity(query, type, { signal });
   } catch (err) {
     // Only a 400 (Qloo not accepting this type URN) moves on to the next
-    // type. Anything else, including 429 and 5xx, propagates.
+    // type. Anything else, including 429, 5xx and aborts, propagates.
     if (err instanceof QlooHttpError && err.status === 400) return "rejected";
     throw err;
   }
@@ -164,13 +198,16 @@ async function attemptResolve(
   return best;
 }
 
-async function resolveOne(product: Product): Promise<ResolvedEntity | null> {
+async function resolveOne(
+  product: Product,
+  signal?: AbortSignal,
+): Promise<ResolvedEntity | null> {
   let best: ResolveAttempt | null = null;
 
   // Name first; if no type reaches the threshold, retry with the category.
   for (const query of [product.name, product.category]) {
     for (const type of RESOLVE_TYPES) {
-      const attempt = await attemptResolve(query, type);
+      const attempt = await attemptResolve(query, type, signal);
       const tag = `[type=${type} query="${query}"]`;
 
       if (attempt === "rejected") {
@@ -217,10 +254,11 @@ function toResolved(product: Product, a: ResolveAttempt): ResolvedEntity {
  */
 export async function resolveProducts(
   products: Product[],
+  signal?: AbortSignal,
 ): Promise<ResolvedEntity[]> {
   const resolved: ResolvedEntity[] = [];
   for (const product of products) {
-    const entity = await resolveOne(product);
+    const entity = await resolveOne(product, signal);
     if (entity) {
       resolved.push(entity);
     } else {
@@ -236,38 +274,53 @@ export async function resolveProducts(
 
 export async function mapCulturalSignals(
   entities: ResolvedEntity[],
+  signal?: AbortSignal,
 ): Promise<Map<string, CulturalSignal[]>> {
   const out = new Map<string, CulturalSignal[]>();
 
   for (const entity of entities) {
     const name = entity.product.name;
-    const all: CulturalSignal[] = [];
-
-    for (const domain of SIGNAL_DOMAINS) {
-      const response = await getCulturalAffinities(entity.qlooId, domain, {
-        take: SIGNALS_PER_DOMAIN_REQUESTED,
-      });
-      let skipped = 0;
-      for (const e of response.results.entities) {
-        const affinity = readAffinity(e);
-        if (!isUsableEntity(e) || affinity === undefined) {
-          skipped++;
-          continue;
+    const domainResults = await mapLimit(
+      SIGNAL_DOMAINS,
+      QLOO_CONCURRENCY,
+      async (domain) => {
+        try {
+          const response = await getCulturalAffinities(entity.qlooId, domain, {
+            take: SIGNALS_PER_DOMAIN_REQUESTED,
+            signal,
+          });
+          const signals: CulturalSignal[] = [];
+          let skipped = 0;
+          for (const e of response.results.entities) {
+            const affinity = readAffinity(e);
+            if (!isUsableEntity(e) || affinity === undefined) {
+              skipped++;
+              continue;
+            }
+            signals.push({
+              entityId: e.entity_id,
+              entityType: e.types?.[0] ?? domain,
+              label: e.name,
+              affinity,
+            });
+          }
+          if (skipped > 0) {
+            console.log(
+              `[agent:signals] "${name}" → ${domain}: skipped ${skipped} entities with no id/name/affinity`,
+            );
+          }
+          return signals;
+        } catch (err) {
+          if (err instanceof QlooHttpError && err.status === 400) {
+            console.log(`[agent:signals] "${name}" → ${domain}: rejected by Qloo (400)`);
+            return [];
+          }
+          throw err;
         }
-        all.push({
-          entityId: e.entity_id,
-          entityType: e.types?.[0] ?? domain,
-          label: e.name,
-          affinity,
-        });
-      }
-      if (skipped > 0) {
-        console.log(
-          `[agent:signals] "${name}" → ${domain}: skipped ${skipped} entities with no id/name/affinity`,
-        );
-      }
-    }
+      },
+    );
 
+    const all = domainResults.flat();
     const kept = all
       .filter((s) => s.affinity > SIGNAL_MIN_AFFINITY)
       .sort((a, b) => b.affinity - a.affinity)
@@ -292,6 +345,7 @@ export async function mapCulturalSignals(
 
 export async function findAdjacentProducts(
   signals: Map<string, CulturalSignal[]>,
+  abortSignal?: AbortSignal,
 ): Promise<Candidate[]> {
   // The map keys are the user's catalog product names.
   const catalogNames = Array.from(signals.keys());
@@ -305,27 +359,58 @@ export async function findAdjacentProducts(
     }
   }
 
+  // Take the strongest distinct signals by affinity across the catalog
+  const signalList = Array.from(distinct.values())
+    .sort((a, b) => b.affinity - a.affinity)
+    .slice(0, 20);
   const byId = new Map<string, Candidate>();
-  for (const signal of distinct.values()) {
-    const response = await getCulturalAffinities(
-      signal.entityId,
-      CANDIDATE_TYPE,
-      { take: CANDIDATES_PER_SIGNAL },
-    );
 
-    let added = 0;
-    let inCatalog = 0;
-    let unscored = 0;
-    for (const e of response.results.entities) {
-      const affinity = readAffinity(e);
-      if (!isUsableEntity(e) || affinity === undefined) {
-        unscored++;
-        continue;
+  const results = await mapLimit(
+    signalList,
+    QLOO_CONCURRENCY,
+    async (signal) => {
+      try {
+        const response = await getCulturalAffinities(
+          signal.entityId,
+          CANDIDATE_TYPE,
+          { take: CANDIDATES_PER_SIGNAL, signal: abortSignal },
+        );
+        let added = 0;
+        let inCatalog = 0;
+        let unscored = 0;
+        const matched: { candidate: QlooEntity; affinity: number }[] = [];
+        for (const e of response.results.entities) {
+          const affinity = readAffinity(e);
+          if (!isUsableEntity(e) || affinity === undefined) {
+            unscored++;
+            continue;
+          }
+          if (matchesCatalog(e.name, catalogNames)) {
+            inCatalog++;
+            continue;
+          }
+          matched.push({ candidate: e, affinity });
+          added++;
+        }
+        console.log(
+          `[agent:candidates] "${signal.label}" [${signal.entityId}] → ${added} candidates` +
+            ` (${inCatalog} matched catalog, ${unscored} unscored)`,
+        );
+        return { signal, matched };
+      } catch (err) {
+        if (err instanceof QlooHttpError && err.status === 400) {
+          console.log(
+            `[agent:candidates] "${signal.label}" [${signal.entityId}] → rejected by Qloo as seed (400)`,
+          );
+          return { signal, matched: [] };
+        }
+        throw err;
       }
-      if (matchesCatalog(e.name, catalogNames)) {
-        inCatalog++;
-        continue;
-      }
+    },
+  );
+
+  for (const { signal, matched } of results) {
+    for (const { candidate: e, affinity } of matched) {
       let candidate = byId.get(e.entity_id);
       if (!candidate) {
         candidate = {
@@ -339,13 +424,9 @@ export async function findAdjacentProducts(
       }
       candidate.signals.push({ ...signal, candidateAffinity: affinity });
       candidate.totalAffinity += affinity;
-      added++;
     }
-    console.log(
-      `[agent:candidates] "${signal.label}" [${signal.entityId}] → ${added} candidates` +
-        ` (${inCatalog} matched catalog, ${unscored} unscored)`,
-    );
   }
+
   return Array.from(byId.values());
 }
 
@@ -398,68 +479,135 @@ export function rankAndFilter(
 
 // ---------- Orchestration ----------
 
+export type AgentStage = "resolve" | "signals" | "candidates" | "rank" | "done";
+
 export interface AgentTrace {
+  /** The stage currently running (or "done"). Set before each stage starts. */
+  stage: AgentStage;
   resolved: ResolvedEntity[];
   signals: Map<string, CulturalSignal[]>;
   candidates: Candidate[];
 }
 
+export interface AgentOptions {
+  /** Receives each stage's output as soon as that stage finishes. */
+  trace?: Partial<AgentTrace>;
+  /** Aborting cancels the in-flight Qloo request and stops the pipeline. */
+  signal?: AbortSignal;
+}
+
+/** A stage finished without error but produced nothing usable. */
+export class AgentEmptyStageError extends Error {
+  constructor(
+    public readonly stage: AgentStage,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentEmptyStageError";
+  }
+}
+
+function runId(): string {
+  return Math.random().toString(36).slice(2, 8);
+}
+
 /**
- * Runs all four stages. Pass `trace` to receive each stage's output (used by
- * scripts/reality-check.ts). Throws if any stage comes back empty.
+ * Runs all four stages from raw products. Throws if any stage comes back
+ * empty. Used by scripts/reality-check.ts.
  */
 export async function runAgent(
   products: Product[],
-  trace?: Partial<AgentTrace>,
+  options: AgentOptions = {},
 ): Promise<Recommendation[]> {
+  const { trace, signal } = options;
   if (products.length === 0) {
     throw new Error("runAgent: no products were provided.");
   }
 
-  console.time("agent:stage1:resolve");
-  const resolved = await resolveProducts(products);
-  console.timeEnd("agent:stage1:resolve");
+  const id = runId();
+  if (trace) trace.stage = "resolve";
+  console.time(`agent:${id}:stage1:resolve`);
+  const resolved = await resolveProducts(products, signal);
+  console.timeEnd(`agent:${id}:stage1:resolve`);
   if (trace) trace.resolved = resolved;
   if (resolved.length === 0) {
-    throw new Error(
+    throw new AgentEmptyStageError(
+      "resolve",
       "Stage 1 (resolve) found no Qloo entity for any product, by name or by category.",
     );
   }
 
-  console.time("agent:stage2:signals");
-  const signals = await mapCulturalSignals(resolved);
-  console.timeEnd("agent:stage2:signals");
+  return runStages2to4(id, resolved, products, options);
+}
+
+/**
+ * Runs stages 2-4 from entities already resolved in Stage 1 (what
+ * /api/recommend receives). The catalog used for novelty and de-duplication
+ * is the resolved entities' products.
+ */
+export async function runAgentFromResolved(
+  resolved: ResolvedEntity[],
+  options: AgentOptions = {},
+): Promise<Recommendation[]> {
+  if (resolved.length === 0) {
+    throw new Error("runAgentFromResolved: no resolved entities were provided.");
+  }
+  if (options.trace) options.trace.resolved = resolved;
+  return runStages2to4(
+    runId(),
+    resolved,
+    resolved.map((r) => r.product),
+    options,
+  );
+}
+
+async function runStages2to4(
+  id: string,
+  resolved: ResolvedEntity[],
+  catalog: Product[],
+  { trace, signal }: AgentOptions,
+): Promise<Recommendation[]> {
+  if (trace) trace.stage = "signals";
+  console.time(`agent:${id}:stage2:signals`);
+  const signals = await mapCulturalSignals(resolved, signal);
+  console.timeEnd(`agent:${id}:stage2:signals`);
   if (trace) trace.signals = signals;
   const signalCount = Array.from(signals.values()).reduce(
     (n, list) => n + list.length,
     0,
   );
   if (signalCount === 0) {
-    throw new Error(
+    throw new AgentEmptyStageError(
+      "signals",
       `Stage 2 (signals) produced no signals above affinity ${SIGNAL_MIN_AFFINITY}. ` +
         "If the log shows entities skipped for a missing affinity, the /v2/insights response " +
         "shape differs from lib/types.ts: inspect one raw response.",
     );
   }
 
-  console.time("agent:stage3:candidates");
-  const candidates = await findAdjacentProducts(signals);
-  console.timeEnd("agent:stage3:candidates");
+  if (trace) trace.stage = "candidates";
+  console.time(`agent:${id}:stage3:candidates`);
+  const candidates = await findAdjacentProducts(signals, signal);
+  console.timeEnd(`agent:${id}:stage3:candidates`);
   if (trace) trace.candidates = candidates;
   if (candidates.length === 0) {
-    throw new Error(
+    throw new AgentEmptyStageError(
+      "candidates",
       "Stage 3 (candidates) found no adjacent products for any signal.",
     );
   }
 
-  console.time("agent:stage4:rank");
-  const recommendations = rankAndFilter(candidates, products);
-  console.timeEnd("agent:stage4:rank");
+  if (trace) trace.stage = "rank";
+  console.time(`agent:${id}:stage4:rank`);
+  const recommendations = rankAndFilter(candidates, catalog);
+  console.timeEnd(`agent:${id}:stage4:rank`);
   if (recommendations.length === 0) {
-    throw new Error(
+    throw new AgentEmptyStageError(
+      "rank",
       `Stage 4 (rank) left nothing: no candidate was backed by at least ${MIN_SUPPORTING_SIGNALS} distinct signals.`,
     );
   }
 
+  if (trace) trace.stage = "done";
   return recommendations;
 }

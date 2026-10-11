@@ -33,6 +33,7 @@ function getApiKey(): string {
 async function qlooGet(
   path: string,
   params: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const apiKey = getApiKey();
 
@@ -41,23 +42,36 @@ async function qlooGet(
     url.searchParams.set(name, value);
   }
 
-  // The key travels in a header, so the URL is safe to log.
-  console.log(`[qloo] -> GET ${url.toString()}`);
-  const res = await fetch(url, { headers: { "X-Api-Key": apiKey } });
-  console.log(`[qloo] <- ${res.status} ${res.statusText}`);
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // The key travels in a header, so the URL is safe to log.
+    console.log(`[qloo] -> GET ${url.toString()}`);
+    const res = await fetch(url, { headers: { "X-Api-Key": apiKey }, signal });
+    console.log(`[qloo] <- ${res.status} ${res.statusText}`);
 
-  const body = await res.text();
-  if (!res.ok) {
-    throw new QlooHttpError(res.status, url.toString(), body, res.statusText);
-  }
+    if (res.status === 429 && attempt < maxRetries) {
+      const delay = 1000 * Math.pow(2, attempt);
+      console.log(
+        `[qloo] 429 rate limited, waiting ${delay}ms before retry ${attempt + 1}/${maxRetries}`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
 
-  try {
-    return JSON.parse(body);
-  } catch {
-    throw new Error(
-      `Qloo returned a non-JSON body for ${url.toString()}:\n${body}`,
-    );
+    const body = await res.text();
+    if (!res.ok) {
+      throw new QlooHttpError(res.status, url.toString(), body, res.statusText);
+    }
+
+    try {
+      return JSON.parse(body);
+    } catch {
+      throw new Error(
+        `Qloo returned a non-JSON body for ${url.toString()}:\n${body}`,
+      );
+    }
   }
+  throw new Error(`Exceeded max retries for ${url.toString()}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -72,8 +86,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function resolveEntity(
   query: string,
   type: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<QlooSearchResponse> {
-  const json = await qlooGet("/search", { query, types: type });
+  const json = await qlooGet("/search", { query, types: type }, options.signal);
 
   if (!isRecord(json) || !Array.isArray(json.results)) {
     throw new Error(
@@ -93,7 +108,7 @@ export async function resolveEntity(
 export async function getCulturalAffinities(
   entityId: string,
   entityType: string,
-  options: { take?: number } = {},
+  options: { take?: number; signal?: AbortSignal } = {},
 ): Promise<QlooInsightsResponse> {
   const params: Record<string, string> = {
     "filter.type": entityType,
@@ -101,7 +116,7 @@ export async function getCulturalAffinities(
   };
   if (options.take !== undefined) params.take = String(options.take);
 
-  const json = await qlooGet("/v2/insights", params);
+  const json = await qlooGet("/v2/insights", params, options.signal);
 
   if (
     !isRecord(json) ||
