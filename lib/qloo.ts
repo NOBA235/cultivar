@@ -1,9 +1,19 @@
-import type { QlooInsightsResponse, QlooSearchResponse } from "./types";
+import type {
+  QlooInsightsResponse,
+  QlooRequestAudit,
+  QlooSearchResponse,
+} from "./types";
 
 // Live Qloo API client. Every function here makes a real network call.
 // There is no mock, fixture, or fallback path in this file.
 
 const QLOO_BASE_URL = "https://hackathon.api.qloo.com";
+
+export interface QlooRawResult<T = unknown> {
+  data: T;
+  request: QlooRequestAudit;
+  response: unknown;
+}
 
 /** Thrown for any non-2xx response, so callers can branch on the status. */
 export class QlooHttpError extends Error {
@@ -30,17 +40,23 @@ function getApiKey(): string {
   return key;
 }
 
-async function qlooGet(
+export async function qlooGetWithAudit<T = unknown>(
   path: string,
   params: Record<string, string>,
   signal?: AbortSignal,
-): Promise<unknown> {
+): Promise<QlooRawResult<T>> {
   const apiKey = getApiKey();
 
   const url = new URL(path, QLOO_BASE_URL);
   for (const [name, value] of Object.entries(params)) {
     url.searchParams.set(name, value);
   }
+
+  const auditRequest: QlooRequestAudit = {
+    url: url.toString(),
+    params: { ...params },
+    method: "GET",
+  };
 
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -63,19 +79,57 @@ async function qlooGet(
       throw new QlooHttpError(res.status, url.toString(), body, res.statusText);
     }
 
+    let parsed: unknown;
     try {
-      return JSON.parse(body);
+      parsed = JSON.parse(body);
     } catch {
       throw new Error(
         `Qloo returned a non-JSON body for ${url.toString()}:\n${body}`,
       );
     }
+
+    return {
+      data: parsed as T,
+      request: auditRequest,
+      response: parsed,
+    };
   }
   throw new Error(`Exceeded max retries for ${url.toString()}`);
 }
 
+export async function qlooGet(
+  path: string,
+  params: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const res = await qlooGetWithAudit(path, params, signal);
+  return res.data;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * GET /search: resolve a name to Qloo entities, returning raw request and response audit.
+ */
+export async function resolveEntityWithAudit(
+  query: string,
+  type: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<QlooRawResult<QlooSearchResponse>> {
+  const auditRes = await qlooGetWithAudit<QlooSearchResponse>(
+    "/search",
+    { query, types: type },
+    options.signal,
+  );
+
+  if (!isRecord(auditRes.data) || !Array.isArray(auditRes.data.results)) {
+    throw new Error(
+      `Unexpected /search response shape (expected a "results" array):\n${JSON.stringify(auditRes.data, null, 2)}`,
+    );
+  }
+  return auditRes;
 }
 
 /**
@@ -88,14 +142,40 @@ export async function resolveEntity(
   type: string,
   options: { signal?: AbortSignal } = {},
 ): Promise<QlooSearchResponse> {
-  const json = await qlooGet("/search", { query, types: type }, options.signal);
+  const audit = await resolveEntityWithAudit(query, type, options);
+  return audit.data;
+}
 
-  if (!isRecord(json) || !Array.isArray(json.results)) {
+/**
+ * GET /v2/insights: entities culturally adjacent to a seed entity, returning raw request and response audit.
+ */
+export async function getCulturalAffinitiesWithAudit(
+  entityId: string,
+  entityType: string,
+  options: { take?: number; signal?: AbortSignal } = {},
+): Promise<QlooRawResult<QlooInsightsResponse>> {
+  const params: Record<string, string> = {
+    "filter.type": entityType,
+    "signal.interests.entities": entityId,
+  };
+  if (options.take !== undefined) params.take = String(options.take);
+
+  const auditRes = await qlooGetWithAudit<QlooInsightsResponse>(
+    "/v2/insights",
+    params,
+    options.signal,
+  );
+
+  if (
+    !isRecord(auditRes.data) ||
+    !isRecord(auditRes.data.results) ||
+    !Array.isArray(auditRes.data.results.entities)
+  ) {
     throw new Error(
-      `Unexpected /search response shape (expected a "results" array):\n${JSON.stringify(json, null, 2)}`,
+      `Unexpected /v2/insights response shape (expected results.entities array):\n${JSON.stringify(auditRes.data, null, 2)}`,
     );
   }
-  return json as QlooSearchResponse;
+  return auditRes;
 }
 
 /**
@@ -110,22 +190,6 @@ export async function getCulturalAffinities(
   entityType: string,
   options: { take?: number; signal?: AbortSignal } = {},
 ): Promise<QlooInsightsResponse> {
-  const params: Record<string, string> = {
-    "filter.type": entityType,
-    "signal.interests.entities": entityId,
-  };
-  if (options.take !== undefined) params.take = String(options.take);
-
-  const json = await qlooGet("/v2/insights", params, options.signal);
-
-  if (
-    !isRecord(json) ||
-    !isRecord(json.results) ||
-    !Array.isArray(json.results.entities)
-  ) {
-    throw new Error(
-      `Unexpected /v2/insights response shape (expected results.entities array):\n${JSON.stringify(json, null, 2)}`,
-    );
-  }
-  return json as QlooInsightsResponse;
+  const audit = await getCulturalAffinitiesWithAudit(entityId, entityType, options);
+  return audit.data;
 }

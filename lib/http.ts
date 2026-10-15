@@ -64,7 +64,7 @@ export async function readJson(
 /** Reads the uploaded CSV from multipart/form-data field "file". */
 export async function readCsvUpload(
   request: Request,
-): Promise<{ ok: true; text: string } | { ok: false; response: Response }> {
+): Promise<{ ok: true; text: string; type?: string } | { ok: false; response: Response }> {
   let form: FormData;
   try {
     form = await request.formData();
@@ -85,5 +85,7 @@ export async function readCsvUpload(
       response: jsonError(400, "MISSING_FILE", 'No file found in form field "file".'),
     };
   }
-  return { ok: true, text: await file.text() };
+  const typeVal = form.get("type");
+  const type = typeof typeVal === "string" && typeVal.trim() ? typeVal.trim() : undefined;
+  return { ok: true, text: await file.text(), type };
 }

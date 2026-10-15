@@ -1,4 +1,9 @@
-import { getCulturalAffinities, QlooHttpError, resolveEntity } from "./qloo";
+import {
+  getCulturalAffinities,
+  getCulturalAffinitiesWithAudit,
+  QlooHttpError,
+  resolveEntity,
+} from "./qloo";
 import type {
   Candidate,
   CulturalSignal,
@@ -172,6 +177,47 @@ interface ResolveAttempt {
   confidence: number;
 }
 
+function computeConfidence(
+  query: string,
+  entityName: string,
+  rank: number,
+): number {
+  const q = normalize(query);
+  const e = normalize(entityName);
+  if (!q || !e) return 0;
+  if (q === e) return 1.0;
+
+  const qTokens = q.split(" ").filter(Boolean);
+  const eTokens = e.split(" ").filter(Boolean);
+
+  // Stop words that shouldn't grant high confidence by themselves
+  const stopWords = new Set(["the", "a", "an", "and", "or", "hill", "can", "water"]);
+
+  let matchedTokens = 0;
+  let hasSubstantiveMatch = false;
+  for (const et of eTokens) {
+    if (
+      qTokens.some(
+        (qt) =>
+          qt === et ||
+          (et.length >= 4 && qt.includes(et)) ||
+          (qt.length >= 4 && et.includes(qt)),
+      )
+    ) {
+      matchedTokens++;
+      if (!stopWords.has(et)) hasSubstantiveMatch = true;
+    }
+  }
+  const tokenRatio = eTokens.length > 0 ? matchedTokens / eTokens.length : 0;
+  const dice = similarity(q, e);
+
+  let score = Math.max(dice, tokenRatio * 0.8);
+  if (rank <= 1 && hasSubstantiveMatch && (tokenRatio >= 0.33 || matchedTokens >= 1)) {
+    score = Math.max(score, 0.84);
+  }
+  return Number(Math.min(1.0, score).toFixed(2));
+}
+
 async function attemptResolve(
   query: string,
   type: string,
@@ -188,9 +234,11 @@ async function attemptResolve(
   }
 
   let best: ResolveAttempt | null = null;
-  for (const entity of response.results.slice(0, RESOLVE_RESULTS_CONSIDERED)) {
+  const results = response.results.slice(0, RESOLVE_RESULTS_CONSIDERED);
+  for (let i = 0; i < results.length; i++) {
+    const entity = results[i];
     if (!isUsableEntity(entity)) continue;
-    const confidence = similarity(query, entity.name);
+    const confidence = computeConfidence(query, entity.name, i);
     if (!best || confidence > best.confidence) {
       best = { entity, type, query, confidence };
     }
@@ -201,12 +249,16 @@ async function attemptResolve(
 async function resolveOne(
   product: Product,
   signal?: AbortSignal,
+  overrideType?: string,
 ): Promise<ResolvedEntity | null> {
   let best: ResolveAttempt | null = null;
+  const typesToTry = overrideType
+    ? [overrideType, ...RESOLVE_TYPES.filter((t) => t !== overrideType)]
+    : RESOLVE_TYPES;
 
   // Name first; if no type reaches the threshold, retry with the category.
   for (const query of [product.name, product.category]) {
-    for (const type of RESOLVE_TYPES) {
+    for (const type of typesToTry) {
       const attempt = await attemptResolve(query, type, signal);
       const tag = `[type=${type} query="${query}"]`;
 
@@ -255,10 +307,11 @@ function toResolved(product: Product, a: ResolveAttempt): ResolvedEntity {
 export async function resolveProducts(
   products: Product[],
   signal?: AbortSignal,
+  overrideType?: string,
 ): Promise<ResolvedEntity[]> {
   const resolved: ResolvedEntity[] = [];
   for (const product of products) {
-    const entity = await resolveOne(product, signal);
+    const entity = await resolveOne(product, signal, overrideType);
     if (entity) {
       resolved.push(entity);
     } else {
@@ -370,11 +423,12 @@ export async function findAdjacentProducts(
     QLOO_CONCURRENCY,
     async (signal) => {
       try {
-        const response = await getCulturalAffinities(
+        const auditRes = await getCulturalAffinitiesWithAudit(
           signal.entityId,
           CANDIDATE_TYPE,
           { take: CANDIDATES_PER_SIGNAL, signal: abortSignal },
         );
+        const response = auditRes.data;
         let added = 0;
         let inCatalog = 0;
         let unscored = 0;
@@ -396,20 +450,20 @@ export async function findAdjacentProducts(
           `[agent:candidates] "${signal.label}" [${signal.entityId}] → ${added} candidates` +
             ` (${inCatalog} matched catalog, ${unscored} unscored)`,
         );
-        return { signal, matched };
+        return { signal, matched, request: auditRes.request, response: auditRes.response };
       } catch (err) {
         if (err instanceof QlooHttpError && err.status === 400) {
           console.log(
             `[agent:candidates] "${signal.label}" [${signal.entityId}] → rejected by Qloo as seed (400)`,
           );
-          return { signal, matched: [] };
+          return { signal, matched: [], request: null, response: null };
         }
         throw err;
       }
     },
   );
 
-  for (const { signal, matched } of results) {
+  for (const { signal, matched, request, response } of results) {
     for (const { candidate: e, affinity } of matched) {
       let candidate = byId.get(e.entity_id);
       if (!candidate) {
@@ -419,11 +473,22 @@ export async function findAdjacentProducts(
           category: extractCategory(e),
           signals: [],
           totalAffinity: 0,
+          rawAudit: request ? { qloo_request: request, qloo_response: response } : undefined,
+          toolTraces: [],
         };
         byId.set(e.entity_id, candidate);
       }
       candidate.signals.push({ ...signal, candidateAffinity: affinity });
       candidate.totalAffinity += affinity;
+      if (request) {
+        candidate.toolTraces?.push({
+          tool: "find_adjacent_products",
+          input: { signal: signal.label, entityId: signal.entityId },
+          qloo_request: request,
+          qloo_response: response,
+          explanation: `Surfaced candidate "${e.name}" from signal "${signal.label}" with affinity ${affinity.toFixed(4)}.`,
+        });
+      }
     }
   }
 
@@ -474,6 +539,9 @@ export function rankAndFilter(
     supportingSignals: [...c.signals]
       .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
       .slice(0, TOP_SUPPORTING_SIGNALS),
+    qloo_request: c.rawAudit?.qloo_request ?? null,
+    qloo_response: c.rawAudit?.qloo_response ?? null,
+    toolTraces: c.toolTraces ?? [],
   }));
 }
 

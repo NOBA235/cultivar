@@ -64,24 +64,26 @@ export async function generateJson<T>(opts: {
     const finish = response.candidates?.[0]?.finishReason ?? "unknown";
     console.log(`[gemini] <- ${opts.label} in ${ms}ms (finishReason=${finish})`);
 
-  const text = response.text;
-  if (!text) {
-    throw new Error(`Gemini returned no text for ${opts.label} (finishReason=${finish}).`);
-  }
+    const text = response.text;
+    if (!text) {
+      throw new Error(`Gemini returned no text for ${opts.label} (finishReason=${finish}).`);
+    }
 
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(`Gemini returned non-JSON for ${opts.label}:\n${text}`);
-  }
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`Gemini returned non-JSON for ${opts.label}:\n${text}`);
+    }
 
-  const parsed = opts.schema.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `Gemini output for ${opts.label} failed validation: ${parsed.error.message}\nRaw: ${text}`,
-    );
+    const parsed = opts.schema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error(
+        `Gemini output for ${opts.label} failed validation: ${parsed.error.message}\nRaw: ${text}`,
+      );
+    }
+    return parsed.data;
   }
-  return parsed.data;
+  throw new Error(`Exceeded max retries for ${opts.label}`);
 }
 

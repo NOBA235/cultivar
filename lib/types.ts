@@ -26,6 +26,27 @@ export interface CulturalSignal {
   candidateAffinity?: number;
 }
 
+export interface QlooRequestAudit {
+  url: string;
+  params?: Record<string, string>;
+  method?: string;
+}
+
+export interface ToolResponse<T> {
+  result: T;
+  qloo_request: QlooRequestAudit | null;
+  qloo_response: unknown | null;
+  explanation: string;
+}
+
+export interface ToolTrace {
+  tool: string;
+  input: unknown;
+  qloo_request: QlooRequestAudit | null;
+  qloo_response: unknown | null;
+  explanation: string;
+}
+
 export interface Recommendation {
   name: string;
   // Qloo entity ID of the recommended entity itself.
@@ -34,6 +55,10 @@ export interface Recommendation {
   confidence: number;
   supportingSignals: CulturalSignal[];
   explanation?: string;
+  // Audit trail of tool calls and raw Qloo details for the "Why Panel"
+  qloo_request?: QlooRequestAudit | null;
+  qloo_response?: unknown | null;
+  toolTraces?: ToolTrace[];
 }
 
 // Stage 3 output: an entity Qloo surfaced from one or more cultural signals.
@@ -43,6 +68,11 @@ export interface Candidate {
   category: string;
   signals: CulturalSignal[];
   totalAffinity: number;
+  rawAudit?: {
+    qloo_request: QlooRequestAudit | null;
+    qloo_response: unknown | null;
+  };
+  toolTraces?: ToolTrace[];
 }
 
 // ---------- Qloo response shapes ----------

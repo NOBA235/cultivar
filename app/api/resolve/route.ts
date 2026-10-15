@@ -19,7 +19,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     try {
-      const resolved = await resolveProducts(parsed.products);
+      const resolved = await resolveProducts(parsed.products, undefined, upload.type);
       const resolvedSet = new Set(resolved.map((r) => r.product));
       const unresolved = parsed.products.filter((p) => !resolvedSet.has(p));
       return Response.json({ resolved, unresolved });
