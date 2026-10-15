@@ -1,5 +1,4 @@
 import {
-  getCulturalAffinities,
   getCulturalAffinitiesWithAudit,
   QlooHttpError,
   resolveEntity,
@@ -338,10 +337,11 @@ export async function mapCulturalSignals(
       QLOO_CONCURRENCY,
       async (domain) => {
         try {
-          const response = await getCulturalAffinities(entity.qlooId, domain, {
+          const auditRes = await getCulturalAffinitiesWithAudit(entity.qlooId, domain, {
             take: SIGNALS_PER_DOMAIN_REQUESTED,
             signal,
           });
+          const response = auditRes.data;
           const signals: CulturalSignal[] = [];
           let skipped = 0;
           for (const e of response.results.entities) {
@@ -355,6 +355,8 @@ export async function mapCulturalSignals(
               entityType: e.types?.[0] ?? domain,
               label: e.name,
               affinity,
+              qloo_request: auditRes.request,
+              qloo_response: auditRes.response,
             });
           }
           if (skipped > 0) {
@@ -519,11 +521,12 @@ export function rankAndFilter(
     .filter((c) => c.signals.length >= MIN_SUPPORTING_SIGNALS)
     .map((c) => {
       const isNew = !tokens(c.category).some((t) => catalogTokens.has(t));
+      const noveltyBonus = isNew ? NOVELTY_BONUS : 1.0;
       const score =
         c.totalAffinity *
         Math.log(c.signals.length + 1) *
-        (isNew ? NOVELTY_BONUS : 1.0);
-      return { c, score };
+        noveltyBonus;
+      return { c, score, isNew, noveltyBonus };
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, TOP_RECOMMENDATIONS);
@@ -531,18 +534,37 @@ export function rankAndFilter(
   if (scored.length === 0) return [];
   const top = scored[0].score;
 
-  return scored.map(({ c, score }) => ({
-    name: c.name,
-    entityId: c.entityId,
-    category: c.category,
-    confidence: top > 0 ? Math.round((score / top) * 100) : 0,
-    supportingSignals: [...c.signals]
-      .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
-      .slice(0, TOP_SUPPORTING_SIGNALS),
-    qloo_request: c.rawAudit?.qloo_request ?? null,
-    qloo_response: c.rawAudit?.qloo_response ?? null,
-    toolTraces: c.toolTraces ?? [],
-  }));
+  return scored.map(({ c, score, isNew, noveltyBonus }) => {
+    const confidence = top > 0 ? Math.round((score / top) * 100) : 0;
+    const totalAffinityFormatted = Number(c.totalAffinity.toFixed(4));
+    const rawScoreFormatted = Number(score.toFixed(4));
+    const topScoreFormatted = Number(top.toFixed(4));
+    const calculationText = `${totalAffinityFormatted} × ln(${c.signals.length} + 1) × ${noveltyBonus.toFixed(1)} = ${rawScoreFormatted} (relative to top score ${topScoreFormatted}: ${confidence}%)`;
+
+    return {
+      name: c.name,
+      entityId: c.entityId,
+      category: c.category,
+      confidence,
+      supportingSignals: [...c.signals]
+        .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
+        .slice(0, TOP_SUPPORTING_SIGNALS),
+      qloo_request: c.rawAudit?.qloo_request ?? null,
+      qloo_response: c.rawAudit?.qloo_response ?? null,
+      toolTraces: c.toolTraces ?? [],
+      ranking: {
+        formula: "totalAffinity × ln(signalCount + 1) × noveltyBonus",
+        totalAffinity: totalAffinityFormatted,
+        signalCount: c.signals.length,
+        isNewCategory: isNew,
+        noveltyBonus,
+        rawScore: rawScoreFormatted,
+        topScore: topScoreFormatted,
+        confidence,
+        calculationText,
+      },
+    };
+  });
 }
 
 // ---------- Orchestration ----------

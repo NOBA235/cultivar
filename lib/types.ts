@@ -24,6 +24,9 @@ export interface CulturalSignal {
   // Set in stage 3: Qloo's affinity between this signal and the candidate
   // it helped surface (the number that explains the recommendation).
   candidateAffinity?: number;
+  // Audit trail for the Why Panel
+  qloo_request?: QlooRequestAudit | null;
+  qloo_response?: unknown | null;
 }
 
 export interface QlooRequestAudit {
@@ -42,9 +45,21 @@ export interface ToolResponse<T> {
 export interface ToolTrace {
   tool: string;
   input: unknown;
-  qloo_request: QlooRequestAudit | null;
-  qloo_response: unknown | null;
+  qloo_request?: QlooRequestAudit | null;
+  qloo_response?: unknown | null;
   explanation: string;
+}
+
+export interface RankingBreakdown {
+  formula: string;
+  totalAffinity: number;
+  signalCount: number;
+  isNewCategory: boolean;
+  noveltyBonus: number;
+  rawScore: number;
+  topScore: number;
+  confidence: number;
+  calculationText: string;
 }
 
 export interface Recommendation {
@@ -59,6 +74,7 @@ export interface Recommendation {
   qloo_request?: QlooRequestAudit | null;
   qloo_response?: unknown | null;
   toolTraces?: ToolTrace[];
+  ranking?: RankingBreakdown;
 }
 
 // Stage 3 output: an entity Qloo surfaced from one or more cultural signals.

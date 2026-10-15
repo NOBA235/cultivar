@@ -355,24 +355,47 @@ export async function rank_candidates(
         .split(" ")
         .filter(Boolean)
         .some((t) => catalogTokens.has(t));
+      const noveltyBonus = isNew ? 1.5 : 1.0;
       const score =
-        c.totalAffinity * Math.log(c.signals.length + 1) * (isNew ? 1.5 : 1.0);
-      return { c, score };
+        c.totalAffinity * Math.log(c.signals.length + 1) * noveltyBonus;
+      return { c, score, isNew, noveltyBonus };
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
 
   const top = scored[0]?.score ?? 1;
 
-  const recommendations: Recommendation[] = scored.map(({ c, score }) => ({
-    name: c.name,
-    entityId: c.entityId,
-    category: c.category,
-    confidence: top > 0 ? Math.round((score / top) * 100) : 0,
-    supportingSignals: [...c.signals]
-      .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
-      .slice(0, 5),
-  }));
+  const recommendations: Recommendation[] = scored.map(({ c, score, isNew, noveltyBonus }) => {
+    const confidence = top > 0 ? Math.round((score / top) * 100) : 0;
+    const totalAffinityFormatted = Number(c.totalAffinity.toFixed(4));
+    const rawScoreFormatted = Number(score.toFixed(4));
+    const topScoreFormatted = Number(top.toFixed(4));
+    const calculationText = `${totalAffinityFormatted} × ln(${c.signals.length} + 1) × ${noveltyBonus.toFixed(1)} = ${rawScoreFormatted} (relative to top score ${topScoreFormatted}: ${confidence}%)`;
+
+    return {
+      name: c.name,
+      entityId: c.entityId,
+      category: c.category,
+      confidence,
+      supportingSignals: [...c.signals]
+        .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
+        .slice(0, 5),
+      qloo_request: c.rawAudit?.qloo_request ?? null,
+      qloo_response: c.rawAudit?.qloo_response ?? null,
+      toolTraces: c.toolTraces ?? [],
+      ranking: {
+        formula: "totalAffinity × ln(signalCount + 1) × noveltyBonus",
+        totalAffinity: totalAffinityFormatted,
+        signalCount: c.signals.length,
+        isNewCategory: isNew,
+        noveltyBonus,
+        rawScore: rawScoreFormatted,
+        topScore: topScoreFormatted,
+        confidence,
+        calculationText,
+      },
+    };
+  });
 
   return {
     result: recommendations,

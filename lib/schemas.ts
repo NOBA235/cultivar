@@ -97,12 +97,40 @@ export const ResolvedEntitySchema: z.ZodType<ResolvedEntity> = z.object({
   label: z.string().min(1),
 });
 
+export const QlooRequestAuditSchema = z.object({
+  url: z.string(),
+  params: z.record(z.string(), z.string()).optional(),
+  method: z.string().optional(),
+});
+
+export const ToolTraceSchema = z.object({
+  tool: z.string(),
+  input: z.unknown(),
+  qloo_request: QlooRequestAuditSchema.nullable().optional(),
+  qloo_response: z.unknown().nullable().optional(),
+  explanation: z.string(),
+});
+
+export const RankingBreakdownSchema = z.object({
+  formula: z.string(),
+  totalAffinity: z.number(),
+  signalCount: z.number(),
+  isNewCategory: z.boolean(),
+  noveltyBonus: z.number(),
+  rawScore: z.number(),
+  topScore: z.number(),
+  confidence: z.number(),
+  calculationText: z.string(),
+});
+
 export const CulturalSignalSchema: z.ZodType<CulturalSignal> = z.object({
   entityId: z.string().min(1),
   entityType: z.string().min(1),
   label: z.string().min(1),
   affinity: z.number(),
   candidateAffinity: z.number().optional(),
+  qloo_request: QlooRequestAuditSchema.nullable().optional(),
+  qloo_response: z.unknown().nullable().optional(),
 });
 
 export const RecommendationSchema: z.ZodType<Recommendation> = z.object({
@@ -112,6 +140,10 @@ export const RecommendationSchema: z.ZodType<Recommendation> = z.object({
   confidence: z.number(),
   supportingSignals: z.array(CulturalSignalSchema).min(1),
   explanation: z.string().optional(),
+  qloo_request: QlooRequestAuditSchema.nullable().optional(),
+  qloo_response: z.unknown().nullable().optional(),
+  toolTraces: z.array(ToolTraceSchema).optional(),
+  ranking: RankingBreakdownSchema.optional(),
 });
 
 export const RecommendRequestSchema = z.object({

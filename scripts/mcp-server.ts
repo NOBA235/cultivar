@@ -12,3 +12,4 @@ main().catch((err) => {
   console.error("[mcp] Fatal error running MCP server:", err);
   process.exit(1);
 });
+
