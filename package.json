@@ -11,6 +11,7 @@
     "reality-check": "tsx --env-file=.env.local scripts/reality-check.ts",
     "test:tools": "tsx --env-file=.env.local scripts/test-tools.ts",
     "mcp": "tsx --env-file=.env.local scripts/mcp-server.ts",
+    "verify:phase5": "tsx --env-file=.env.local scripts/verify-phase5.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

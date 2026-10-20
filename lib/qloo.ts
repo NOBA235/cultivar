@@ -62,7 +62,21 @@ export async function qlooGetWithAudit<T = unknown>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // The key travels in a header, so the URL is safe to log.
     console.log(`[qloo] -> GET ${url.toString()}`);
-    const res = await fetch(url, { headers: { "X-Api-Key": apiKey }, signal });
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: { "X-Api-Key": apiKey }, signal });
+    } catch (err: unknown) {
+      if (signal?.aborted) throw err;
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt);
+        console.warn(
+          `[qloo] network/timeout error (${err instanceof Error ? err.message : String(err)}), retrying in ${delay}ms (${attempt + 1}/${maxRetries})...`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
     console.log(`[qloo] <- ${res.status} ${res.statusText}`);
 
     if (res.status === 429 && attempt < maxRetries) {
