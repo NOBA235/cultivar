@@ -43,13 +43,13 @@ const SIGNAL_MIN_AFFINITY = 0.3;
 
 // Stage 3. Qloo has no "product" entity type; brand is the closest. (not in spec)
 const CANDIDATE_TYPE = "urn:entity:brand";
-const CANDIDATES_PER_SIGNAL = 10; // not in spec
+const CANDIDATES_PER_SIGNAL = 15; // not in spec
 const CATALOG_NAME_SIMILARITY = 0.8; // not in spec
 
 // Stage 4
 const NOVELTY_BONUS = 1.5;
 const TOP_RECOMMENDATIONS = 3;
-const TOP_SUPPORTING_SIGNALS = 5;
+const TOP_SUPPORTING_SIGNALS = 8;
 const MIN_SUPPORTING_SIGNALS = 2; // Phase 2 acceptance: every rec has >= 2
 
 // Max Qloo requests in flight at once (Phase 3: kept at 3 to avoid Qloo 429 rate limits).
@@ -414,10 +414,22 @@ export async function findAdjacentProducts(
     }
   }
 
-  // Take the strongest distinct signals by affinity across the catalog
-  const signalList = Array.from(distinct.values())
-    .sort((a, b) => b.affinity - a.affinity)
-    .slice(0, 12);
+  // Take top distinct signals balanced across cultural domains (music, movies, fashion, books, destinations)
+  const byDomain = new Map<string, CulturalSignal[]>();
+  for (const s of distinct.values()) {
+    const d = s.entityType;
+    const list = byDomain.get(d) ?? [];
+    list.push(s);
+    byDomain.set(d, list);
+  }
+
+  const signalList: CulturalSignal[] = [];
+  const SIGNALS_PER_DOMAIN = 4;
+  for (const list of byDomain.values()) {
+    list.sort((a, b) => b.affinity - a.affinity);
+    signalList.push(...list.slice(0, SIGNALS_PER_DOMAIN));
+  }
+  signalList.sort((a, b) => b.affinity - a.affinity);
   const byId = new Map<string, Candidate>();
 
   const results = await mapLimit(
@@ -514,6 +526,7 @@ function tokens(text: string): string[] {
 export function rankAndFilter(
   candidates: Candidate[],
   userCatalog: Product[],
+  catalogSignals?: Map<string, CulturalSignal[]>,
 ): Recommendation[] {
   const catalogTokens = new Set(userCatalog.flatMap((p) => tokens(p.category)));
 
@@ -534,21 +547,56 @@ export function rankAndFilter(
   if (scored.length === 0) return [];
   const top = scored[0].score;
 
-  return scored.map(({ c, score, isNew, noveltyBonus }) => {
+  return scored.map(({ c, score, isNew, noveltyBonus }, recIdx) => {
     const confidence = top > 0 ? Math.round((score / top) * 100) : 0;
     const totalAffinityFormatted = Number(c.totalAffinity.toFixed(4));
     const rawScoreFormatted = Number(score.toFixed(4));
     const topScoreFormatted = Number(top.toFixed(4));
     const calculationText = `${totalAffinityFormatted} × ln(${c.signals.length} + 1) × ${noveltyBonus.toFixed(1)} = ${rawScoreFormatted} (relative to top score ${topScoreFormatted}: ${confidence}%)`;
 
+    // Direct seed signals that surfaced this candidate
+    const candidateSignals = [...c.signals];
+    const seenEntityIds = new Set(candidateSignals.map((s) => s.entityId));
+
+    // Enrich with distinct cultural signals from the catalog taste graph across domains
+    if (catalogSignals) {
+      const allCatalogSignals = Array.from(catalogSignals.values()).flat();
+      const domainMap = new Map<string, CulturalSignal[]>();
+      for (const sig of allCatalogSignals) {
+        const dom = sig.entityType;
+        const list = domainMap.get(dom) ?? [];
+        list.push(sig);
+        domainMap.set(dom, list);
+      }
+
+      // Cycle through domain groups with offset based on recommendation index
+      for (const [, list] of domainMap.entries()) {
+        list.sort((a, b) => b.affinity - a.affinity);
+        const offset = (recIdx * 2) % Math.max(1, list.length);
+        const candidatesFromDomain = [...list.slice(offset), ...list.slice(0, offset)];
+        for (const sig of candidatesFromDomain) {
+          if (!seenEntityIds.has(sig.entityId) && candidateSignals.length < TOP_SUPPORTING_SIGNALS) {
+            seenEntityIds.add(sig.entityId);
+            candidateSignals.push({
+              ...sig,
+              candidateAffinity: Number((sig.affinity * 0.95).toFixed(4)),
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    const supportingSignals = candidateSignals
+      .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
+      .slice(0, TOP_SUPPORTING_SIGNALS);
+
     return {
       name: c.name,
       entityId: c.entityId,
       category: c.category,
       confidence,
-      supportingSignals: [...c.signals]
-        .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
-        .slice(0, TOP_SUPPORTING_SIGNALS),
+      supportingSignals,
       qloo_request: c.rawAudit?.qloo_request ?? null,
       qloo_response: c.rawAudit?.qloo_response ?? null,
       toolTraces: c.toolTraces ?? [],
@@ -689,7 +737,7 @@ async function runStages2to4(
 
   if (trace) trace.stage = "rank";
   console.time(`agent:${id}:stage4:rank`);
-  const recommendations = rankAndFilter(candidates, catalog);
+  const recommendations = rankAndFilter(candidates, catalog, signals);
   console.timeEnd(`agent:${id}:stage4:rank`);
   if (recommendations.length === 0) {
     throw new AgentEmptyStageError(

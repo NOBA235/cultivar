@@ -1,4 +1,4 @@
-import type { Product, Recommendation } from "./types";
+import type { Recommendation } from "./types";
 
 // Prompts and response schemas for the two Gemini calls.
 // The LLM never chooses what to recommend: /api/explain only narrates a
@@ -46,7 +46,7 @@ export function buildExplainPrompt(rec: Recommendation): string {
 // ---------- /api/generic (baseline, no Qloo) ----------
 
 export const GENERIC_INSTRUCTION =
-  "Suggest 3 new product ideas for this food producer. Be specific.";
+  "You are a food product consultant. Given these existing products, suggest 3 new product ideas. Be specific. Return JSON: { suggestions: [{ name, category, reasoning }] }";
 
 export const GENERIC_RESPONSE_SCHEMA = {
   type: "object",
@@ -60,18 +60,18 @@ export const GENERIC_RESPONSE_SCHEMA = {
         properties: {
           name: { type: "string" },
           category: { type: "string" },
-          description: { type: "string" },
+          reasoning: { type: "string" },
         },
-        required: ["name", "category", "description"],
-        propertyOrdering: ["name", "category", "description"],
+        required: ["name", "category", "reasoning"],
+        propertyOrdering: ["name", "category", "reasoning"],
       },
     },
   },
   required: ["suggestions"],
 } as const;
 
-/** Only names and categories go in: no descriptions, no Qloo data. */
-export function buildGenericPrompt(products: Product[]): string {
+/** Only names and categories go in: no descriptions, no Qloo data whatsoever. */
+export function buildGenericPrompt(products: Array<{ name: string; category: string }>): string {
   return [
     "Current products (name | category):",
     ...products.map((p) => `- ${p.name} | ${p.category}`),

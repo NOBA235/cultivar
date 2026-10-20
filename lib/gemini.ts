@@ -47,6 +47,7 @@ export async function generateJson<T>(opts: {
           responseMimeType: "application/json",
           responseJsonSchema: opts.jsonSchema,
           abortSignal: opts.signal,
+          temperature: 0.2,
         },
       });
     } catch (err: unknown) {

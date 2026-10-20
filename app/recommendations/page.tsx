@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import * as Dialog from "@radix-ui/react-dialog";
-import type { Recommendation, CulturalSignal } from "@/lib/types";
+import { CulturalGraphModal } from "@/components/CulturalGraph";
+import type { Recommendation, CulturalSignal, ResolvedEntity } from "@/lib/types";
 
 function cleanDomain(urn: string): string {
   const map: Record<string, string> = {
@@ -34,9 +34,21 @@ export default function RecommendationsPage() {
   const [showFullJsonMap, setShowFullJsonMap] = useState<Record<string, boolean>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [graphModalRec, setGraphModalRec] = useState<Recommendation | null>(null);
+  const [sourceProducts, setSourceProducts] = useState<ResolvedEntity[]>([]);
   const [showBreakdown, setShowBreakdown] = useState<boolean>(false);
 
   useEffect(() => {
+    // Read source products if available
+    const rawResolved = sessionStorage.getItem("cultivar:resolved");
+    if (rawResolved) {
+      try {
+        const parsedResolved = JSON.parse(rawResolved);
+        if (parsedResolved && Array.isArray(parsedResolved.resolved)) {
+          setSourceProducts(parsedResolved.resolved);
+        }
+      } catch {}
+    }
+
     const raw = sessionStorage.getItem("cultivar:recommendations");
     if (!raw) {
       router.push("/");
@@ -186,9 +198,20 @@ export default function RecommendationsPage() {
             <span className="text-xs text-slate-500 font-mono">/ Recommendations Dashboard</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs font-mono px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          Qloo Grounded
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.push("/compare")}
+            className="text-xs text-amber-300 hover:text-amber-200 bg-amber-950/40 border border-amber-800/60 hover:border-amber-700/80 px-3 py-1.5 rounded-lg transition font-mono flex items-center gap-1.5 cursor-pointer"
+          >
+            Compare with Generic LLM
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+            </svg>
+          </button>
+          <div className="flex items-center gap-2 text-xs font-mono px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            Qloo Grounded
+          </div>
         </div>
       </header>
 
@@ -617,80 +640,13 @@ export default function RecommendationsPage() {
         </div>
       </main>
 
-      {/* Cultural Graph Modal (Radix Dialog) */}
-      <Dialog.Root open={Boolean(graphModalRec)} onOpenChange={(open) => !open && setGraphModalRec(null)}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 animate-in fade-in" />
-          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl z-50 text-slate-100 font-mono space-y-5 animate-in fade-in zoom-in-95">
-            <div className="flex items-start justify-between">
-              <div>
-                <Dialog.Title className="text-lg font-bold text-white">
-                  Cultural Taste Graph: {graphModalRec?.name}
-                </Dialog.Title>
-                <Dialog.Description className="text-xs text-slate-400 mt-1">
-                  Taste affinities connecting your catalog product to Qloo cultural anchors.
-                </Dialog.Description>
-              </div>
-              <Dialog.Close asChild>
-                <button
-                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
-                  aria-label="Close"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </Dialog.Close>
-            </div>
-
-            {/* Graph Visualization Placeholder / Preview for Phase 7 */}
-            <div className="p-6 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 mx-auto flex items-center justify-center">
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M13 10V3L4 14h7v7l9-11h-7z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <div className="text-sm font-bold text-slate-200">
-                  Taste Connections for &quot;{graphModalRec?.name}&quot;
-                </div>
-                <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                  Active graph linkages across {graphModalRec?.supportingSignals.length} cultural signals.
-                </p>
-              </div>
-
-              {/* Signals pills */}
-              <div className="flex flex-wrap gap-2 justify-center pt-2">
-                {graphModalRec?.supportingSignals.map((s, idx) => (
-                  <span
-                    key={idx}
-                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-300 font-mono"
-                  >
-                    {s.label} &bull; <strong className="text-emerald-400">{(s.candidateAffinity ?? s.affinity).toFixed(2)}</strong>
-                  </span>
-                ))}
-              </div>
-
-              <div className="pt-2 text-[11px] text-slate-500">
-                Phase 7 will attach the interactive force-directed graph node canvas here.
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <Dialog.Close asChild>
-                <button className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition cursor-pointer">
-                  Close Preview
-                </button>
-              </Dialog.Close>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      {/* Cultural Graph Modal (Interactive react-force-graph-2d canvas) */}
+      <CulturalGraphModal
+        recommendation={graphModalRec}
+        sourceProducts={sourceProducts}
+        open={Boolean(graphModalRec)}
+        onOpenChange={(open) => !open && setGraphModalRec(null)}
+      />
 
       {/* Global Toast */}
       {toastMessage && (
