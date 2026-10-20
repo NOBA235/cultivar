@@ -15,6 +15,7 @@
     "verify:phase6": "tsx --env-file=.env.local scripts/verify-phase6.ts",
     "verify:phase7": "tsx --env-file=.env.local scripts/verify-phase7.ts",
     "verify:phase8": "tsx --env-file=.env.local scripts/verify-phase8.ts",
+    "verify:phase9": "tsx --env-file=.env.local scripts/verify-phase9.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -148,6 +148,7 @@ export const RecommendationSchema: z.ZodType<Recommendation> = z.object({
 
 export const RecommendRequestSchema = z.object({
   resolved: z.array(ResolvedEntitySchema).min(1, "resolved must not be empty"),
+  month: z.number().min(1).max(12).optional(),
 });
 
 export const ExplainRequestSchema = z.object({

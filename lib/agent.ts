@@ -3,6 +3,7 @@ import {
   QlooHttpError,
   resolveEntity,
 } from "./qloo";
+import { applySeasonalMultipliers } from "./seasonal";
 import type {
   Candidate,
   CulturalSignal,
@@ -632,6 +633,8 @@ export interface AgentOptions {
   trace?: Partial<AgentTrace>;
   /** Aborting cancels the in-flight Qloo request and stops the pipeline. */
   signal?: AbortSignal;
+  /** Target launch month (1-12) for seasonal taste trend adjustment. */
+  month?: number;
 }
 
 /** A stage finished without error but produced nothing usable. */
@@ -703,12 +706,22 @@ async function runStages2to4(
   id: string,
   resolved: ResolvedEntity[],
   catalog: Product[],
-  { trace, signal }: AgentOptions,
+  { trace, signal, month }: AgentOptions,
 ): Promise<Recommendation[]> {
   if (trace) trace.stage = "signals";
   console.time(`agent:${id}:stage2:signals`);
-  const signals = await mapCulturalSignals(resolved, signal);
+  let signals = await mapCulturalSignals(resolved, signal);
   console.timeEnd(`agent:${id}:stage2:signals`);
+
+  // Phase 9: Apply seasonal multipliers if target launch month is specified
+  if (typeof month === "number") {
+    const seasonallyAdjusted = new Map<string, CulturalSignal[]>();
+    for (const [key, sigList] of signals.entries()) {
+      seasonallyAdjusted.set(key, applySeasonalMultipliers(sigList, month));
+    }
+    signals = seasonallyAdjusted;
+  }
+
   if (trace) trace.signals = signals;
   const signalCount = Array.from(signals.values()).reduce(
     (n, list) => n + list.length,

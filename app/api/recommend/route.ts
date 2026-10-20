@@ -50,6 +50,7 @@ export async function POST(request: Request): Promise<Response> {
       const recommendations = await runAgentFromResolved(parsed.data.resolved, {
         trace,
         signal: controller.signal,
+        month: parsed.data.month,
       });
       return Response.json({ recommendations });
     } catch (err) {

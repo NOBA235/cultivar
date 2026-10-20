@@ -7,70 +7,63 @@ export interface StoredRecommendation {
   recommendation: Recommendation;
   accepted: boolean;
   notes?: string;
+  month?: number;
   savedAt: string;
 }
 
-const memoryStore: StoredRecommendation[] = [];
-const STORAGE_FILE = path.join(process.cwd(), "data", "past_recommendations.json");
+const STORAGE_FILE = path.join(process.cwd(), "data", "memory.json");
 
-async function ensureFileLoaded() {
-  if (memoryStore.length > 0) return;
+export async function readMemoryFile(): Promise<StoredRecommendation[]> {
   try {
     const raw = await fs.readFile(STORAGE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      memoryStore.push(...parsed);
+      return parsed;
     }
+    return [];
   } catch {
-    // If file does not exist yet or fails to parse, start fresh in memory
+    return [];
   }
 }
 
-async function persistToFile() {
-  try {
-    const dir = path.dirname(STORAGE_FILE);
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(STORAGE_FILE, JSON.stringify(memoryStore, null, 2), "utf-8");
-  } catch (err) {
-    console.warn("[memory] Warning: could not persist recommendations to disk:", err);
-  }
+async function writeMemoryFile(entries: StoredRecommendation[]): Promise<void> {
+  const dir = path.dirname(STORAGE_FILE);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(STORAGE_FILE, JSON.stringify(entries, null, 2), "utf-8");
 }
 
 export async function saveRecommendation(
   recommendation: Recommendation,
   accepted: boolean,
   notes?: string,
+  month?: number,
 ): Promise<StoredRecommendation> {
-  await ensureFileLoaded();
-  const existingIdx = memoryStore.findIndex(
-    (item) => item.recommendation.entityId === recommendation.entityId,
-  );
+  const current = await readMemoryFile();
+  const entryId = `mem-${recommendation.entityId.slice(0, 8)}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
   const entry: StoredRecommendation = {
-    id: recommendation.entityId,
+    id: entryId,
     recommendation,
     accepted,
     notes,
+    month,
     savedAt: new Date().toISOString(),
   };
 
-  if (existingIdx >= 0) {
-    memoryStore[existingIdx] = entry;
-  } else {
-    memoryStore.push(entry);
-  }
-
-  await persistToFile();
+  current.push(entry);
+  await writeMemoryFile(current);
   return entry;
 }
 
 export async function getPastRecommendations(): Promise<Recommendation[]> {
-  await ensureFileLoaded();
-  return memoryStore.map((entry) => entry.recommendation);
+  const current = await readMemoryFile();
+  return current.map((entry) => entry.recommendation);
 }
 
 export async function getAllStoredRecords(): Promise<StoredRecommendation[]> {
-  await ensureFileLoaded();
-  return [...memoryStore];
+  return readMemoryFile();
 }
 
+export async function clearAllMemory(): Promise<void> {
+  await writeMemoryFile([]);
+}
