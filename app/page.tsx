@@ -105,24 +105,7 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-emerald-500/30">
-      {/* Navigation */}
-      <header className="border-b border-slate-800/80 px-6 py-4 flex items-center justify-between backdrop-blur bg-slate-950/60 sticky top-0 z-20">
-        <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center font-bold text-emerald-400">
-            CS
-          </div>
-          <div>
-            <span className="font-semibold tracking-tight text-white">CropSignal</span>
-            <span className="text-xs text-slate-500 ml-2 font-mono">v0.1</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs font-mono px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          Live Qloo Taste Graph API
-        </div>
-      </header>
-
+    <div className="flex-1 flex flex-col justify-between selection:bg-emerald-500/30">
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-12 flex-1 flex flex-col justify-center w-full">
         <div className="text-center mb-10 space-y-3">
@@ -299,11 +282,6 @@ export default function UploadPage() {
           </form>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-6 text-center text-xs text-slate-600 font-mono">
-        CropSignal &bull; Qloo Agentic Hackathon Submission &bull; Powered by Qloo Live Graph
-      </footer>
     </div>
   );
 }

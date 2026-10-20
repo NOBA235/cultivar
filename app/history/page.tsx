@@ -129,13 +129,13 @@ export default function HistoryPage() {
   }, [records]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-emerald-500/30">
-      {/* Header */}
-      <header className="border-b border-slate-800/80 px-6 py-4 flex items-center justify-between backdrop-blur bg-slate-950/60 sticky top-0 z-20">
-        <div className="flex items-center gap-4">
+    <div className="flex-1 flex flex-col justify-between selection:bg-emerald-500/30">
+      {/* Sub-bar */}
+      <div className="border-b border-slate-900 bg-slate-950/40 px-6 py-2.5">
+        <div className="max-w-5xl mx-auto flex items-center justify-between font-mono text-xs">
           <button
             onClick={() => router.push("/recommendations")}
-            className="text-xs text-slate-400 hover:text-emerald-400 transition font-mono flex items-center gap-1.5 cursor-pointer px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700"
+            className="text-slate-400 hover:text-emerald-400 transition flex items-center gap-1.5 cursor-pointer"
             title="Return to Recommendations"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,31 +143,27 @@ export default function HistoryPage() {
             </svg>
             Recommendations
           </button>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold tracking-tight text-white">CropSignal</span>
-            <span className="text-xs text-slate-500 font-mono">/ Memory &amp; Run History</span>
+
+          <div className="flex items-center gap-3">
+            {records.length > 0 && (
+              <button
+                onClick={handleClearMemory}
+                className="text-slate-400 hover:text-rose-400 px-2.5 py-0.5 rounded border border-slate-800 hover:border-rose-900/50 bg-slate-900 transition font-mono cursor-pointer text-[11px]"
+              >
+                Clear Memory
+              </button>
+            )}
+
+            <div className="flex items-center gap-2 text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
+              Persistent JSON Store
+            </div>
           </div>
         </div>
-
-        <div className="flex items-center gap-3">
-          {records.length > 0 && (
-            <button
-              onClick={handleClearMemory}
-              className="text-xs text-slate-400 hover:text-rose-400 px-3 py-1.5 rounded-lg border border-slate-800 hover:border-rose-900/50 bg-slate-900 transition font-mono cursor-pointer"
-            >
-              Clear Memory
-            </button>
-          )}
-
-          <div className="flex items-center gap-2 text-xs font-mono px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
-            Persistent JSON Store
-          </div>
-        </div>
-      </header>
+      </div>
 
       {/* Main Content */}
-      <main className="max-w-5xl mx-auto px-6 py-10 flex-1 w-full space-y-8">
+      <main className="max-w-5xl mx-auto px-6 py-8 flex-1 w-full space-y-6">
         {/* Title */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -371,11 +367,6 @@ export default function HistoryPage() {
           <span>{toastMessage}</span>
         </div>
       )}
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-6 text-center text-xs text-slate-600 font-mono">
-        CropSignal &bull; Phase 9 Memory &amp; Seasonality Engine &bull; Stored in /data/memory.json
-      </footer>
     </div>
   );
 }

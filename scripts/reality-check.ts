@@ -2,13 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runAgent, type AgentTrace } from "../lib/agent";
 import { parseCatalogCsv } from "../lib/schemas";
-import type { Product } from "../lib/types";
+import type { Product, Recommendation, ResolvedEntity } from "../lib/types";
 
-// End-to-end run against the LIVE Qloo API. No LLM is called.
+// End-to-end run against the LIVE Qloo API or against a deployed BASE_URL.
 //   npx tsx scripts/reality-check.ts
-// Run it from the project root so .env.local and public/ resolve.
+//   BASE_URL=https://cultivar.vercel.app npx tsx scripts/reality-check.ts
 
-// tsx does not load .env.local by itself, so load it here (Node 20.12+).
 if (!process.env.QLOO_API_KEY && existsSync(".env.local")) {
   const loadEnvFile = (process as unknown as { loadEnvFile?: (p: string) => void })
     .loadEnvFile;
@@ -28,8 +27,72 @@ function section(title: string): void {
   console.log(`\n=== ${title} ===`);
 }
 
+async function runAgainstBaseUrl(baseUrl: string): Promise<void> {
+  console.log(`Running reality-check against HTTP endpoint: ${baseUrl}`);
+  const catalogPath = join(process.cwd(), "public", "demo-catalog.csv");
+  const csvData = readFileSync(catalogPath, "utf-8");
+  const formData = new FormData();
+  formData.append("file", new Blob([csvData], { type: "text/csv" }), "demo-catalog.csv");
+
+  section("STAGE 1: RESOLVE VIA HTTP");
+  const resolveRes = await fetch(`${baseUrl}/api/resolve`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!resolveRes.ok) throw new Error(`Resolve failed: HTTP ${resolveRes.status}`);
+  const { resolved }: { resolved: ResolvedEntity[] } = await resolveRes.json();
+  console.log(`Resolved ${resolved.length} products`);
+  for (const r of resolved) {
+    console.log(`"${r.product.name}" → ${r.qlooId} | type=${r.qlooType} | confidence=${r.confidence.toFixed(2)}`);
+  }
+
+  section("STAGE 2-4: RECOMMEND VIA HTTP");
+  const recommendRes = await fetch(`${baseUrl}/api/recommend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resolved }),
+  });
+  if (!recommendRes.ok) throw new Error(`Recommend failed: HTTP ${recommendRes.status}`);
+  const { recommendations }: { recommendations: Recommendation[] } = await recommendRes.json();
+
+  section("RECOMMENDATIONS");
+  recommendations.forEach((rec, i) => {
+    console.log(`#${i + 1} "${rec.name}" | ${rec.entityId} | category="${rec.category}" | confidence=${rec.confidence}/100`);
+    for (const s of rec.supportingSignals) {
+      console.log(`    signal ${s.entityId} | ${s.entityType} | "${s.label}" | affinity=${s.affinity.toFixed(4)}`);
+    }
+  });
+
+  section("CHECKS");
+  const ids = new Set<string>([
+    ...resolved.map((r) => r.qlooId),
+    ...recommendations.flatMap((r) => r.supportingSignals.map((s) => s.entityId)),
+    ...recommendations.map((r) => r.entityId),
+  ]);
+  const thinRecs = recommendations.filter((r) => r.supportingSignals.length < 2);
+
+  console.log(`distinct Qloo entity IDs seen: ${ids.size}`);
+  console.log(`recommendations: ${recommendations.length}`);
+  console.log(`recommendations with < 2 supporting signals: ${thinRecs.length}`);
+
+  const failures: string[] = [];
+  if (ids.size < 5) failures.push(`only ${ids.size} distinct entity IDs (need at least 5)`);
+  if (thinRecs.length > 0) failures.push(`${thinRecs.length} recommendation(s) have < 2 supporting signals`);
+  if (failures.length > 0) {
+    console.error(`CHECKS FAILED: ${failures.join("; ")}`);
+    process.exit(1);
+  }
+  console.log("CHECKS PASSED (HTTP)");
+}
+
 async function main(): Promise<void> {
   const products = loadCatalog();
+  const baseUrl = process.env.BASE_URL?.trim();
+
+  if (baseUrl) {
+    await runAgainstBaseUrl(baseUrl);
+    return;
+  }
 
   section("INPUT");
   products.forEach((p, i) =>

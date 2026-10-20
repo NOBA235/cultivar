@@ -38,11 +38,47 @@ export default function RecommendationsPage() {
   const [sourceProducts, setSourceProducts] = useState<ResolvedEntity[]>([]);
   const [showBreakdown, setShowBreakdown] = useState<boolean>(false);
 
-  // Phase 9: Seasonality and Memory states
+  // Seasonality and Memory states
   const [selectedMonth, setSelectedMonth] = useState<number>(10); // Default: October (Autumn)
   const [isRecalculatingMonth, setIsRecalculatingMonth] = useState<boolean>(false);
   const [cardDecisions, setCardDecisions] = useState<Record<string, boolean>>({});
   const [savingRecId, setSavingRecId] = useState<string | null>(null);
+
+  // Polish: State for dismissible disclaimer banner
+  const [dismissDisclaimer, setDismissDisclaimer] = useState<boolean>(false);
+
+  const copyFullReportAsJson = async () => {
+    try {
+      const whyPanelData = (recommendations || []).map((rec) => ({
+        recommendation: rec.name,
+        category: rec.category,
+        confidence: rec.confidence,
+        ranking_breakdown: rec.ranking,
+        supporting_signals: rec.supportingSignals.map((sig) => ({
+          label: sig.label,
+          domain: cleanDomain(sig.entityType),
+          qloo_id: sig.entityId,
+          affinity: sig.candidateAffinity ?? sig.affinity,
+          qloo_request: sig.qloo_request,
+          qloo_response: sig.qloo_response,
+        })),
+        live_queries: rec.supportingSignals.map((s) => s.qloo_request?.url),
+      }));
+
+      const fullReport = {
+        app: "Cultivar",
+        catalog: sourceProducts,
+        recommendations,
+        why_panel_data: whyPanelData,
+        exported_at: new Date().toISOString(),
+      };
+
+      await navigator.clipboard.writeText(JSON.stringify(fullReport, null, 2));
+      showToast("Full audit report copied to clipboard as JSON");
+    } catch {
+      showToast("Failed to copy report JSON");
+    }
+  };
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -288,55 +324,62 @@ export default function RecommendationsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-emerald-500/30">
-      {/* Header */}
-      <header className="border-b border-slate-800/80 px-6 py-4 flex items-center justify-between backdrop-blur bg-slate-950/60 sticky top-0 z-20">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => router.push("/resolve")}
-            className="text-xs text-slate-400 hover:text-emerald-400 transition font-mono flex items-center gap-1.5 cursor-pointer px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700"
-            title="Return to resolution review"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            Review Catalog
-          </button>
+    <div className="flex-1 flex flex-col justify-between selection:bg-emerald-500/30">
+      {/* Sub-bar / Actions */}
+      <div className="border-b border-slate-900 bg-slate-950/40 px-6 py-2.5">
+        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push("/resolve")}
+              className="text-slate-400 hover:text-emerald-400 transition flex items-center gap-1.5 cursor-pointer"
+              title="Return to resolution review"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Review Catalog
+            </button>
+            <span className="text-slate-700">|</span>
+            <span className="text-slate-500">Live Recommendations Dashboard</span>
+          </div>
+
           <div className="flex items-center gap-2">
-            <span className="font-semibold tracking-tight text-white">CropSignal</span>
-            <span className="text-xs text-slate-500 font-mono">/ Recommendations Dashboard</span>
+            {/* Polish 7: Copy full report as JSON button */}
+            <button
+              onClick={copyFullReportAsJson}
+              className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-emerald-400 hover:text-emerald-300 font-medium transition cursor-pointer flex items-center gap-1.5"
+              title="Export complete run with audit trails and Why Panel payloads"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Copy full report as JSON
+            </button>
           </div>
         </div>
-
-        <div className="flex items-center gap-3">
-          {/* Phase 9: Link to History */}
-          <button
-            onClick={() => router.push("/history")}
-            className="text-xs text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-lg transition font-mono flex items-center gap-1.5 cursor-pointer"
-          >
-            History &amp; Memory
-          </button>
-
-          {/* Phase 8: Link to Compare */}
-          <button
-            onClick={() => router.push("/compare")}
-            className="text-xs text-amber-300 hover:text-amber-200 bg-amber-950/40 border border-amber-800/60 hover:border-amber-700/80 px-3 py-1.5 rounded-lg transition font-mono flex items-center gap-1.5 cursor-pointer"
-          >
-            Compare with Generic LLM
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-            </svg>
-          </button>
-
-          <div className="flex items-center gap-2 text-xs font-mono px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Qloo Grounded
-          </div>
-        </div>
-      </header>
+      </div>
 
       {/* Main Content */}
-      <main className="max-w-4xl mx-auto px-6 py-10 flex-1 w-full space-y-8">
+      <main className="max-w-4xl mx-auto px-6 py-8 flex-1 w-full space-y-6">
+        {/* Polish 3: Dismissible Disclaimer Banner */}
+        {!dismissDisclaimer && (
+          <div className="p-3.5 rounded-xl bg-amber-950/20 border border-amber-800/50 flex items-start justify-between gap-3 text-xs font-mono text-amber-200/90 animate-in fade-in">
+            <div className="flex items-start gap-2.5">
+              <span className="text-amber-400 text-sm leading-none shrink-0 mt-0.5">⚠️</span>
+              <p className="leading-relaxed">
+                <strong>Decision-Support Notice:</strong> These recommendations are decision-support tools, not market guarantees. Verify supply chain and production feasibility before acting.
+              </p>
+            </div>
+            <button
+              onClick={() => setDismissDisclaimer(true)}
+              className="text-amber-400/80 hover:text-amber-200 p-1 rounded hover:bg-amber-900/40 cursor-pointer text-xs shrink-0"
+              aria-label="Dismiss disclaimer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Title */}
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
@@ -347,7 +390,7 @@ export default function RecommendationsPage() {
           </p>
         </div>
 
-        {/* Phase 9 Task 3: Seasonality Controls */}
+        {/* Seasonality Controls */}
         <div className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -823,11 +866,6 @@ export default function RecommendationsPage() {
           <span>{toastMessage}</span>
         </div>
       )}
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-6 text-center text-xs text-slate-600 font-mono">
-        CropSignal &bull; Grounded in Qloo Live Graph &bull; Gemini 2.5 Flash Explanations
-      </footer>
     </div>
   );
 }
