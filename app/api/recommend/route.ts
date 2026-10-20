@@ -10,7 +10,7 @@ import { RecommendRequestSchema, zodIssues } from "@/lib/schemas";
 // POST { resolved: ResolvedEntity[] } (the output of /api/resolve).
 // Runs stages 2-4 against the live Qloo API and returns the top 3.
 
-const PIPELINE_TIMEOUT_MS = 30_000;
+const PIPELINE_TIMEOUT_MS = 45_000;
 
 // Above the pipeline timeout so our 504 is sent before the platform kills us.
 export const maxDuration = 60;

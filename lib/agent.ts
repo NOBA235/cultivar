@@ -417,7 +417,7 @@ export async function findAdjacentProducts(
   // Take the strongest distinct signals by affinity across the catalog
   const signalList = Array.from(distinct.values())
     .sort((a, b) => b.affinity - a.affinity)
-    .slice(0, 20);
+    .slice(0, 12);
   const byId = new Map<string, Candidate>();
 
   const results = await mapLimit(
