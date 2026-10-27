@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { CulturalGraphModal } from "@/components/CulturalGraph";
 import { MONTH_NAMES, getSeasonForMonth } from "@/lib/seasonal";
@@ -44,8 +44,56 @@ export default function RecommendationsPage() {
   const [cardDecisions, setCardDecisions] = useState<Record<string, boolean>>({});
   const [savingRecId, setSavingRecId] = useState<string | null>(null);
 
-  // Polish: State for dismissible disclaimer banner
+  // Dismissible disclaimer banner
   const [dismissDisclaimer, setDismissDisclaimer] = useState<boolean>(false);
+
+  // Refs for Why Panels to wire `beforematch` event listeners for `hidden="until-found"`
+  const whyPanelRefs = useRef<Record<number, HTMLDivElement | null>>({});
+
+  // Feature-detect `onbeforematch` support and wire listeners for Find-in-Page reveal
+  useEffect(() => {
+    if (typeof HTMLElement === "undefined") return;
+
+    if (!("onbeforematch" in HTMLElement.prototype)) {
+      // Fallback for browsers without `hidden="until-found"` support
+      setExpandedWhy({ 0: true, 1: true, 2: true });
+      return;
+    }
+
+    const cleanups: Array<() => void> = [];
+    [0, 1, 2].forEach((idx) => {
+      const el = whyPanelRefs.current[idx];
+      if (!el) return;
+      const onMatch = () => {
+        setExpandedWhy((prev) => ({ ...prev, [idx]: true }));
+      };
+      el.addEventListener("beforematch", onMatch);
+      cleanups.push(() => el.removeEventListener("beforematch", onMatch));
+    });
+
+    return () => {
+      cleanups.forEach((fn) => fn());
+    };
+  }, [recommendations]);
+
+  // Ensure hidden="until-found" attribute stays synchronized after browser beforematch reveals it
+  useEffect(() => {
+    if (typeof HTMLElement === "undefined" || !("onbeforematch" in HTMLElement.prototype)) return;
+    [0, 1, 2].forEach((idx) => {
+      const el = whyPanelRefs.current[idx];
+      if (!el) return;
+      if (expandedWhy[idx]) {
+        el.removeAttribute("hidden");
+      } else {
+        el.setAttribute("hidden", "until-found");
+      }
+    });
+  }, [expandedWhy, recommendations]);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  }, []);
 
   const copyFullReportAsJson = async () => {
     try {
@@ -67,6 +115,7 @@ export default function RecommendationsPage() {
 
       const fullReport = {
         app: "Cultivar",
+        products: sourceProducts,
         catalog: sourceProducts,
         recommendations,
         why_panel_data: whyPanelData,
@@ -74,18 +123,12 @@ export default function RecommendationsPage() {
       };
 
       await navigator.clipboard.writeText(JSON.stringify(fullReport, null, 2));
-      showToast("Full audit report copied to clipboard as JSON");
+      showToast("Full report copied to clipboard as JSON");
     } catch {
       showToast("Failed to copy report JSON");
     }
   };
 
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  }, []);
-
-  // Fetch memory records on mount to populate existing card decisions
   useEffect(() => {
     const fetchMemoryDecisions = async () => {
       try {
@@ -125,7 +168,7 @@ export default function RecommendationsPage() {
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         const errMsg = errData.detail || errData.error || `HTTP ${res.status}`;
-        showToast(`Explain API note: ${errMsg}`);
+        showToast(`Explain API error: ${errMsg}`);
         throw new Error(errMsg);
       }
 
@@ -136,7 +179,6 @@ export default function RecommendationsPage() {
       }
     } catch {
       clearTimeout(timeoutId);
-      // Fallback explanation if Gemini timed out or failed
       setRecommendations((prev) => {
         if (!prev) return recsList;
         return prev.map((r) => {
@@ -155,7 +197,6 @@ export default function RecommendationsPage() {
   }, [showToast]);
 
   useEffect(() => {
-    // Read source products if available
     const rawResolved = sessionStorage.getItem("cultivar:resolved");
     if (rawResolved) {
       try {
@@ -196,7 +237,6 @@ export default function RecommendationsPage() {
     fetchExplains(parsedList);
   }, [router, fetchExplains]);
 
-  // Phase 9: Handle target launch month change
   const handleMonthChange = async (newMonth: number) => {
     setSelectedMonth(newMonth);
     setIsRecalculatingMonth(true);
@@ -212,7 +252,7 @@ export default function RecommendationsPage() {
       }
 
       if (resolvedPayload.length === 0) {
-        showToast("No catalog entities found to re-calculate.");
+        showToast("No catalog entities found to recalculate.");
         setIsRecalculatingMonth(false);
         return;
       }
@@ -224,25 +264,25 @@ export default function RecommendationsPage() {
       });
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
       }
 
       const data = await res.json();
       if (Array.isArray(data.recommendations) && data.recommendations.length > 0) {
         setRecommendations(data.recommendations);
         sessionStorage.setItem("cultivar:recommendations", JSON.stringify(data.recommendations));
-        showToast(`Calibrated recommendations for ${MONTH_NAMES[newMonth]} seasonal trends.`);
+        showToast(`Updated recommendations for ${MONTH_NAMES[newMonth]} launch window.`);
         await fetchExplains(data.recommendations);
       }
     } catch (err) {
-      console.error("Failed to recalculate seasonal trends:", err);
-      showToast("Seasonal recalculation failed.");
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Seasonal recalculation failed: ${msg}`);
     } finally {
       setIsRecalculatingMonth(false);
     }
   };
 
-  // Phase 9: Handle memory save (I'll try this / Not for us)
   const handleSaveDecision = async (rec: Recommendation, accepted: boolean) => {
     setSavingRecId(rec.entityId);
     try {
@@ -263,8 +303,8 @@ export default function RecommendationsPage() {
       setCardDecisions((prev) => ({ ...prev, [rec.entityId]: accepted }));
       showToast("Saved. We'll remember this for future runs.");
     } catch (err) {
-      console.error("Failed to save memory decision:", err);
-      showToast("Failed to save decision.");
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to save decision: ${msg}`);
     } finally {
       setSavingRecId(null);
     }
@@ -291,7 +331,6 @@ export default function RecommendationsPage() {
     setShowFullJsonMap((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Domain breakdown summary calculation
   const { totalUniqueEntities, domainCounts } = useMemo(() => {
     if (!recommendations) return { totalUniqueEntities: 0, domainCounts: {} as Record<string, number> };
     const entitySet = new Set<string>();
@@ -314,65 +353,95 @@ export default function RecommendationsPage() {
 
   if (!recommendations) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 font-mono text-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-          <span>Loading recommendations...</span>
+      <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+        <div className="space-y-2 border-b border-stone-200 pb-5">
+          <div className="h-6 w-56 bg-stone-200 rounded animate-pulse" />
+          <div className="h-4 w-96 max-w-full bg-stone-200/70 rounded animate-pulse" />
         </div>
-      </div>
+        <div className="space-y-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-white border border-stone-200 rounded-xl p-6 space-y-4">
+              <div className="h-5 w-48 bg-stone-200 rounded animate-pulse" />
+              <div className="h-12 w-full bg-stone-100 rounded animate-pulse" />
+              <div className="h-4 w-64 bg-stone-200/70 rounded animate-pulse" />
+            </div>
+          ))}
+        </div>
+      </main>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col justify-between selection:bg-emerald-500/30">
-      {/* Sub-bar / Actions */}
-      <div className="border-b border-slate-900 bg-slate-950/40 px-6 py-2.5">
-        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push("/resolve")}
-              className="text-slate-400 hover:text-emerald-400 transition flex items-center gap-1.5 cursor-pointer"
-              title="Return to resolution review"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              Review Catalog
-            </button>
-            <span className="text-slate-700">|</span>
-            <span className="text-slate-500">Live Recommendations Dashboard</span>
+    <div className="flex-1 flex flex-col justify-between">
+      <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+        {/* Page Header & Actions */}
+        <div className="flex flex-col justify-between gap-4 border-b border-[#e7ece6] pb-6 sm:flex-row sm:items-end">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-xs text-stone-500">
+              <button
+                type="button"
+                onClick={() => router.push("/resolve")}
+                className="hover:text-stone-900 transition-colors inline-flex items-center gap-1 cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Review resolved catalog
+              </button>
+              <span aria-hidden="true">/</span>
+              <span>Opportunities</span>
+            </div>
+            <h1 className="text-2xl font-semibold tracking-[-0.04em] text-[#17211b] sm:text-3xl">
+              Product opportunities
+            </h1>
+            <p className="text-sm text-stone-600">
+              Ranked product concepts grounded in Qloo cross-domain taste affinities from your catalog.
+            </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Polish 7: Copy full report as JSON button */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
+              type="button"
+              onClick={() => router.push("/compare")}
+              className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white hover:bg-stone-50 text-stone-700 text-xs font-medium transition-colors cursor-pointer"
+            >
+              Compare with baseline
+            </button>
+            <button
+              type="button"
               onClick={copyFullReportAsJson}
-              className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-emerald-400 hover:text-emerald-300 font-medium transition cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white hover:bg-stone-50 text-stone-800 text-xs font-medium transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
               title="Export complete run with audit trails and Why Panel payloads"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 text-[#1E4D3B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               Copy full report as JSON
             </button>
           </div>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <main className="max-w-4xl mx-auto px-6 py-8 flex-1 w-full space-y-6">
-        {/* Polish 3: Dismissible Disclaimer Banner */}
+        {/* Dismissible Decision-Support Disclaimer Banner */}
         {!dismissDisclaimer && (
-          <div className="p-3.5 rounded-xl bg-amber-950/20 border border-amber-800/50 flex items-start justify-between gap-3 text-xs font-mono text-amber-200/90 animate-in fade-in">
+          <div className="px-4 py-3 rounded-lg bg-amber-50/80 border border-amber-200 flex items-start justify-between gap-3 text-xs text-amber-900">
             <div className="flex items-start gap-2.5">
-              <span className="text-amber-400 text-sm leading-none shrink-0 mt-0.5">⚠️</span>
+              <svg
+                className="w-4 h-4 text-amber-700 shrink-0 mt-0.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               <p className="leading-relaxed">
-                <strong>Decision-Support Notice:</strong> These recommendations are decision-support tools, not market guarantees. Verify supply chain and production feasibility before acting.
+                These recommendations are decision-support tools, not market guarantees. Verify supply chain and production feasibility before acting.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => setDismissDisclaimer(true)}
-              className="text-amber-400/80 hover:text-amber-200 p-1 rounded hover:bg-amber-900/40 cursor-pointer text-xs shrink-0"
+              className="text-amber-700 hover:text-amber-950 p-0.5 rounded hover:bg-amber-100/80 cursor-pointer shrink-0"
               aria-label="Dismiss disclaimer"
             >
               ✕
@@ -380,468 +449,550 @@ export default function RecommendationsPage() {
           </div>
         )}
 
-        {/* Title */}
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-            Cultural Supply Chain Recommendations
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Grounded in Qloo cross-domain taste graph (music, film, dining, and brand affinities). Zero LLM hallucinations.
-          </p>
-        </div>
-
-        {/* Seasonality Controls */}
-        <div className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono font-semibold text-emerald-400 uppercase tracking-wider">
-                Seasonal Taste Calibration
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">
-                {currentSeason.seasonName} Index ({currentSeason.quarter.replace("_", " ")})
-              </span>
+        {/* Seasonal Calibration & Historical Context Bar */}
+        <section
+          aria-label="Seasonal calibration and historical comparison"
+          className="space-y-3.5 rounded-2xl border border-[#e5ebe4] bg-white p-4 shadow-[0_8px_28px_rgba(27,53,35,.035)] sm:p-5"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-stone-900">
+                  Seasonal launch calibration
+                </h2>
+                <span className="text-xs px-2 py-0.5 rounded bg-[#EDF5F0] text-[#1E4D3B] border border-[#C5DFD0] font-medium">
+                  {currentSeason.seasonName} ({currentSeason.quarter.replace("_", " ")})
+                </span>
+              </div>
+              <p className="text-xs text-stone-600">
+                {currentSeason.focusDescription}
+              </p>
             </div>
-            <p className="text-xs text-slate-400">
-              {currentSeason.focusDescription}
-            </p>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <label htmlFor="launch-month" className="text-xs font-mono text-slate-400">
-              Target launch month:
-            </label>
-            <select
-              id="launch-month"
-              value={selectedMonth}
-              disabled={isRecalculatingMonth}
-              onChange={(e) => handleMonthChange(Number(e.target.value))}
-              className="bg-slate-950 border border-slate-700 hover:border-emerald-500/70 text-slate-100 text-xs font-mono px-3 py-1.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
-            >
-              {[
-                { m: 1, label: "Jan (Winter Q1)" },
-                { m: 2, label: "Feb (Winter Q1)" },
-                { m: 3, label: "Mar (Spring Q1/Q2)" },
-                { m: 4, label: "Apr (Spring Q2)" },
-                { m: 5, label: "May (Spring Q2)" },
-                { m: 6, label: "Jun (Summer Q2/Q3)" },
-                { m: 7, label: "Jul (Summer Q3)" },
-                { m: 8, label: "Aug (Summer Q3)" },
-                { m: 9, label: "Sep (Autumn Q3/Q4)" },
-                { m: 10, label: "Oct (Autumn Q4)" },
-                { m: 11, label: "Nov (Autumn Q4)" },
-                { m: 12, label: "Dec (Winter Q4)" },
-              ].map(({ m, label }) => (
-                <option key={m} value={m} className="bg-slate-950 text-slate-100">
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Phase 9 Task 4: "This time last year" comparison */}
-        <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-900/40 space-y-2 text-xs font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-amber-400 font-semibold flex items-center gap-1.5">
-              <span>🗓️ This Time Last Year Comparison ({MONTH_NAMES[selectedMonth]} 2025 vs {MONTH_NAMES[selectedMonth]} 2026)</span>
-            </span>
-            <span className="text-[10px] text-amber-500/80 italic">
-              Illustrative — based on demo memory, not real market data.
-            </span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-slate-300">
-            <div className="p-2.5 rounded bg-slate-950/60 border border-amber-900/30">
-              <div className="text-[10px] text-slate-500 uppercase">Last Year ({MONTH_NAMES[selectedMonth]} 2025)</div>
-              <div className="font-bold text-slate-200 mt-0.5">Chameleon Cold-brew Concentrates</div>
-              <div className="text-[11px] text-slate-400 mt-1">Accepted &bull; High volume staple baseline</div>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <label htmlFor="launch-month" className="text-xs font-medium text-stone-700">
+                Target launch month
+              </label>
+              <select
+                id="launch-month"
+                value={selectedMonth}
+                disabled={isRecalculatingMonth}
+                onChange={(e) => handleMonthChange(Number(e.target.value))}
+                className="bg-white border border-stone-300 hover:border-stone-400 text-stone-900 text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50 shadow-2xs"
+              >
+                {[
+                  { m: 1, label: "January (Q1)" },
+                  { m: 2, label: "February (Q1)" },
+                  { m: 3, label: "March (Q1)" },
+                  { m: 4, label: "April (Q2)" },
+                  { m: 5, label: "May (Q2)" },
+                  { m: 6, label: "June (Q2)" },
+                  { m: 7, label: "July (Q3)" },
+                  { m: 8, label: "August (Q3)" },
+                  { m: 9, label: "September (Q3)" },
+                  { m: 10, label: "October (Q4)" },
+                  { m: 11, label: "November (Q4)" },
+                  { m: 12, label: "December (Q4)" },
+                ].map(({ m, label }) => (
+                  <option key={m} value={m}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="p-2.5 rounded bg-slate-950/60 border border-emerald-900/30">
-              <div className="text-[10px] text-emerald-400 uppercase">This Year ({MONTH_NAMES[selectedMonth]} 2026)</div>
-              <div className="font-bold text-white mt-0.5">{recommendations[0]?.name || "The Wall Street Journal"}</div>
-              <div className="text-[11px] text-slate-300 mt-1">
-                Signal shifted: Audience index rose +34% toward functional botanical infusions &amp; high-trust business media.
+          </div>
+
+          {/* Secondary Disclosure: "This time last year" comparison using native <details> */}
+          <details className="group border-t border-stone-200 pt-3">
+            <summary className="flex items-center justify-between cursor-pointer list-none text-xs font-medium text-stone-700 hover:text-stone-900">
+              <span className="inline-flex items-center gap-1.5">
+                <svg
+                  className="w-3.5 h-3.5 text-stone-500 transition-transform group-open:rotate-90"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <span>
+                  This time last year comparison ({MONTH_NAMES[selectedMonth]} 2025 vs. {MONTH_NAMES[selectedMonth]} 2026)
+                </span>
+              </span>
+              <span className="text-[11px] text-stone-500 font-normal">
+                Illustrative — based on demo memory, not real market data
+              </span>
+            </summary>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 text-xs">
+              <div className="p-3 rounded-lg bg-stone-50 border border-stone-200">
+                <div className="text-[11px] font-medium text-stone-500">
+                  Last year ({MONTH_NAMES[selectedMonth]} 2025)
+                </div>
+                <div className="font-semibold text-stone-900 mt-0.5">
+                  Chameleon Cold-brew Concentrates
+                </div>
+                <div className="text-stone-600 mt-1">
+                  Accepted &bull; Core staple cold-brew baseline
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-[#EDF5F0]/60 border border-[#C5DFD0]">
+                <div className="text-[11px] font-medium text-[#1E4D3B]">
+                  This year ({MONTH_NAMES[selectedMonth]} 2026)
+                </div>
+                <div className="font-semibold text-stone-900 mt-0.5">
+                  {recommendations[0]?.name || "The Wall Street Journal"}
+                </div>
+                <div className="text-stone-700 mt-1">
+                  Signal shift: Audience affinity shifted toward functional botanical infusions and high-trust editorial media.
+                </div>
               </div>
             </div>
+          </details>
+        </section>
+
+        {/* Ranked Recommendation Cards (#1 to #3) */}
+        {isRecalculatingMonth ? (
+          <div className="space-y-4">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="bg-white border border-stone-200 rounded-xl p-6 space-y-4">
+                <div className="flex justify-between">
+                  <div className="h-6 w-56 bg-stone-200 rounded animate-pulse" />
+                  <div className="h-5 w-32 bg-stone-200 rounded animate-pulse" />
+                </div>
+                <div className="h-12 w-full bg-stone-100 rounded animate-pulse" />
+                <div className="h-4 w-72 bg-stone-200/70 rounded animate-pulse" />
+              </div>
+            ))}
           </div>
-        </div>
+        ) : (
+          <div className="space-y-5">
+            {recommendations.slice(0, 3).map((rec, idx) => {
+              const rankNumber = idx + 1;
+              const isWhyExpanded = Boolean(expandedWhy[idx]);
+              const isSignalsExpanded = Boolean(expandedSignals[idx]);
+              const signalsToShow = isSignalsExpanded
+                ? rec.supportingSignals
+                : rec.supportingSignals.slice(0, 3);
 
-        {/* 3 Stacked Recommendation Cards */}
-        <div className="space-y-6">
-          {recommendations.slice(0, 3).map((rec, idx) => {
-            const rankNumber = idx + 1;
-            const isWhyExpanded = Boolean(expandedWhy[idx]);
-            const isSignalsExpanded = Boolean(expandedSignals[idx]);
-            const signalsToShow = isSignalsExpanded
-              ? rec.supportingSignals
-              : rec.supportingSignals.slice(0, 3);
+              const totalAffinityVal =
+                rec.ranking?.totalAffinity ??
+                Number(
+                  rec.supportingSignals
+                    .reduce((acc, s) => acc + (s.candidateAffinity ?? s.affinity), 0)
+                    .toFixed(4)
+                );
+              const signalCountVal = rec.ranking?.signalCount ?? rec.supportingSignals.length;
+              const noveltyBonusVal = rec.ranking?.noveltyBonus ?? 1.5;
+              const isNewCategory = rec.ranking?.isNewCategory ?? true;
+              const rawScoreVal =
+                rec.ranking?.rawScore ??
+                Number(
+                  (totalAffinityVal * Math.log(signalCountVal + 1) * noveltyBonusVal).toFixed(4)
+                );
+              const calcText =
+                rec.ranking?.calculationText ||
+                `${totalAffinityVal} × ln(${signalCountVal} + 1) × ${noveltyBonusVal} = ${rawScoreVal}`;
 
-            // Compute ranking stats
-            const totalAffinityVal =
-              rec.ranking?.totalAffinity ??
-              Number(
-                rec.supportingSignals
-                  .reduce((acc, s) => acc + (s.candidateAffinity ?? s.affinity), 0)
-                  .toFixed(4)
-              );
-            const signalCountVal = rec.ranking?.signalCount ?? rec.supportingSignals.length;
-            const noveltyBonusVal = rec.ranking?.noveltyBonus ?? 1.5;
-            const isNewCategory = rec.ranking?.isNewCategory ?? true;
-            const rawScoreVal =
-              rec.ranking?.rawScore ??
-              Number(
-                (totalAffinityVal * Math.log(signalCountVal + 1) * noveltyBonusVal).toFixed(4)
-              );
-            const calcText =
-              rec.ranking?.calculationText ||
-              `${totalAffinityVal} × ln(${signalCountVal} + 1) × ${noveltyBonusVal} = ${rawScoreVal}`;
+              const entityUrnList = [
+                `urn:entity:brand:${rec.entityId}`,
+                ...rec.supportingSignals.map(getSignalUrn),
+              ];
 
-            // Flat list of urn:entity:... IDs
-            const entityUrnList = [
-              `urn:entity:brand:${rec.entityId}`,
-              ...rec.supportingSignals.map(getSignalUrn),
-            ];
+              return (
+                <article
+                  key={rec.entityId || idx}
+                  className="rounded-xl border border-stone-200 bg-white shadow-2xs overflow-hidden"
+                >
+                  <div className="p-5 sm:p-6 space-y-5">
+                    {/* Card Header: Rank, Name, Category, Confidence */}
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-[#EDF5F0] text-[#1E4D3B] border border-[#C5DFD0] text-xs font-mono font-semibold tabular-nums">
+                            #{rankNumber}
+                          </span>
+                          <h2 className="text-lg font-semibold tracking-tight text-stone-900">
+                            {rec.name}
+                          </h2>
+                          <span className="text-xs px-2 py-0.5 rounded bg-stone-100 text-stone-600 border border-stone-200">
+                            {rec.category}
+                          </span>
+                        </div>
+                      </div>
 
-            return (
-              <div
-                key={rec.entityId || idx}
-                className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 space-y-6 transition hover:border-slate-700/80 backdrop-blur"
-              >
-                {/* Header Row: Rank, Name, Category, Confidence */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl sm:text-2xl font-black font-mono text-emerald-400">
-                        #{rankNumber}
-                      </span>
-                      <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white">
-                        {rec.name}
-                      </h2>
+                      {/* Confidence Meter */}
+                      <div className="w-full sm:w-44 shrink-0 space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-stone-500">Confidence</span>
+                          <span className="text-stone-900 font-mono font-semibold tabular-nums">
+                            {rec.confidence}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-stone-100 border border-stone-200/70 overflow-hidden">
+                          <div
+                            className="h-full bg-[#1E4D3B] rounded-full transition-all duration-300"
+                            style={{ width: `${Math.min(100, Math.max(5, rec.confidence))}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 mt-1 text-xs text-slate-400 font-mono">
-                      <span>Category: {rec.category}</span>
-                      <span>&bull;</span>
-                      <span className="text-slate-300">Confidence: {rec.confidence}%</span>
+
+                    {/* Gemini-Generated Explanation */}
+                    <div className="p-3.5 rounded-lg bg-stone-50 border border-stone-200/80 min-h-[3.25rem] flex items-center">
+                      {loadingExplains ? (
+                        <div className="space-y-2 w-full animate-pulse">
+                          <div className="h-3.5 bg-stone-200 rounded w-5/6" />
+                          <div className="h-3.5 bg-stone-200 rounded w-2/3" />
+                        </div>
+                      ) : (
+                        <p className="text-sm text-stone-800 leading-relaxed">
+                          {rec.explanation || "No explanation provided."}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Supporting Signals */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-stone-700">
+                          Supporting signals ({Math.min(3, rec.supportingSignals.length)} of{" "}
+                          {rec.supportingSignals.length} shown)
+                        </span>
+                        {rec.supportingSignals.length > 3 && (
+                          <button
+                            type="button"
+                            onClick={() => toggleSignals(idx)}
+                            className="text-[#1E4D3B] hover:underline font-medium cursor-pointer"
+                          >
+                            {isSignalsExpanded
+                              ? "Show fewer"
+                              : `Show all ${rec.supportingSignals.length} signals`}
+                          </button>
+                        )}
+                      </div>
+
+                      <ul className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                        {signalsToShow.map((signal, sIdx) => {
+                          const domainClean = cleanDomain(signal.entityType);
+                          const affinityScore = signal.candidateAffinity ?? signal.affinity;
+                          return (
+                            <li
+                              key={sIdx}
+                              className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-stone-50/70 border border-stone-200/80"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium text-stone-900 truncate">
+                                  {signal.label}
+                                </div>
+                                <div className="text-[11px] text-stone-500">
+                                  {domainClean}
+                                </div>
+                              </div>
+                              <span className="font-mono text-xs font-medium text-[#1E4D3B] bg-[#EDF5F0] px-2 py-0.5 rounded border border-[#C5DFD0] shrink-0 tabular-nums">
+                                {affinityScore.toFixed(2)}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+
+                    {/* Primary Card Footer: Evidence Controls & Producer Decision */}
+                    <div className="pt-3 border-t border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          id={`why-btn-${idx}`}
+                          aria-expanded={isWhyExpanded}
+                          aria-controls={`why-panel-${idx}`}
+                          onClick={() => toggleWhy(idx)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
+                            isWhyExpanded
+                              ? "bg-stone-900 text-white border-stone-900"
+                              : "bg-white hover:bg-stone-50 text-stone-800 border-stone-300"
+                          }`}
+                        >
+                          <span>{isWhyExpanded ? "Why this? ▴" : "Why this? ▾"}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setGraphModalRec(rec)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#1E4D3B] bg-[#EDF5F0] hover:bg-[#E2EFE7] border border-[#C5DFD0] rounded-lg transition-colors cursor-pointer"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                          <span>View cultural graph</span>
+                        </button>
+                      </div>
+
+                      {/* Producer Decision Buttons */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {cardDecisions[rec.entityId] !== undefined && (
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
+                              cardDecisions[rec.entityId]
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                                : "bg-rose-50 border-rose-200 text-rose-800"
+                            }`}
+                          >
+                            {cardDecisions[rec.entityId] ? "Saved: I'll try this" : "Saved: Not for us"}
+                          </span>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleSaveDecision(rec, true)}
+                          disabled={savingRecId === rec.entityId}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer disabled:opacity-50 ${
+                            cardDecisions[rec.entityId] === true
+                              ? "bg-[#1E4D3B] border-[#1E4D3B] text-white"
+                              : "bg-white hover:bg-stone-50 border-stone-300 text-stone-800"
+                          }`}
+                        >
+                          I&apos;ll try this
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSaveDecision(rec, false)}
+                          disabled={savingRecId === rec.entityId}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer disabled:opacity-50 ${
+                            cardDecisions[rec.entityId] === false
+                              ? "bg-rose-700 border-rose-700 text-white"
+                              : "bg-white hover:bg-rose-50/50 border-stone-300 text-stone-700 hover:text-rose-800"
+                          }`}
+                        >
+                          Not for us
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Confidence Bar */}
-                  <div className="w-full sm:w-44 space-y-1">
-                    <div className="flex justify-between text-[11px] font-mono text-slate-400">
-                      <span>Confidence</span>
-                      <span className="text-emerald-400 font-bold">{rec.confidence}%</span>
-                    </div>
-                    <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min(100, Math.max(5, rec.confidence))}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Gemini-Generated Explanation */}
-                <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 min-h-[4rem] flex items-center">
-                  {loadingExplains ? (
-                    <div className="space-y-2 w-full animate-pulse">
-                      <div className="h-3.5 bg-slate-800 rounded w-5/6" />
-                      <div className="h-3.5 bg-slate-800 rounded w-3/4" />
-                    </div>
-                  ) : (
-                    <p className="text-sm text-slate-200 leading-relaxed font-sans">
-                      {rec.explanation || "No explanation provided."}
-                    </p>
-                  )}
-                </div>
-
-                {/* Supporting Signals List */}
-                <div className="space-y-2.5">
-                  <div className="text-xs font-mono text-slate-400 flex items-center justify-between">
-                    <span>
-                      Supporting signals ({Math.min(3, rec.supportingSignals.length)} of{" "}
-                      {rec.supportingSignals.length} shown):
-                    </span>
-                    {rec.supportingSignals.length > 3 && (
-                      <button
-                        onClick={() => toggleSignals(idx)}
-                        className="text-emerald-400 hover:text-emerald-300 text-xs font-mono underline underline-offset-2 cursor-pointer transition"
-                      >
-                        {isSignalsExpanded ? "collapse" : "expand for all"}
-                      </button>
-                    )}
-                  </div>
-
-                  <ul className="space-y-1.5 text-xs font-mono">
-                    {signalsToShow.map((signal, sIdx) => {
-                      const domainClean = cleanDomain(signal.entityType);
-                      const affinityScore = signal.candidateAffinity ?? signal.affinity;
-                      return (
-                        <li key={sIdx} className="flex items-center gap-2 text-slate-300">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                          <span className="font-medium text-white">{signal.label}</span>
-                          <span className="text-slate-500">({domainClean})</span>
-                          <span className="text-slate-400">&mdash; affinity {affinityScore.toFixed(2)}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-
-                {/* Action Row: Why This? & View Cultural Graph */}
-                <div className="pt-2 flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={() => toggleWhy(idx)}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium font-mono text-slate-300 bg-slate-800/80 hover:bg-slate-700/80 rounded-lg border border-slate-700 transition cursor-pointer"
+                  {/* Why Panel (Searchable via hidden="until-found" when collapsed) */}
+                  <div
+                    id={`why-panel-${idx}`}
+                    ref={(el) => {
+                      whyPanelRefs.current[idx] = el;
+                    }}
+                    aria-labelledby={`why-btn-${idx}`}
+                    {...(!isWhyExpanded
+                      ? ({ hidden: "until-found" } as unknown as React.HTMLAttributes<HTMLDivElement>)
+                      : {})}
                   >
-                    <span>{isWhyExpanded ? "Why this? ▴" : "Why this? ▾"}</span>
-                  </button>
-
-                  <button
-                    onClick={() => setGraphModalRec(rec)}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 hover:bg-emerald-900/40 rounded-lg transition cursor-pointer"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span>View cultural graph</span>
-                  </button>
-                </div>
-
-                {/* Why Panel (Expandable) */}
-                {isWhyExpanded && (
-                  <div className="pt-4 border-t border-slate-800/90 space-y-6 animate-in fade-in duration-200">
-                    {/* Sub-section A: "The Qloo queries we ran" */}
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold text-slate-200 flex items-center justify-between">
-                        <span>A. The Qloo queries we ran</span>
-                        <span className="text-[11px] font-mono text-slate-500">
+                    {/* Nested wrapper receives borders, padding, and background per search-hidden-content best practices */}
+                    <div className="bg-stone-50 border-t border-stone-200 p-5 sm:p-6 space-y-6 text-xs">
+                      <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-stone-900">
+                            Evidence &amp; ranking audit trail
+                          </h3>
+                          <p className="text-xs text-stone-500">
+                            Exact Qloo API queries, raw JSON payloads, ranking formula, and entity IDs for {rec.name}.
+                          </p>
+                        </div>
+                        <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-white border border-stone-200 text-stone-600">
                           {rec.supportingSignals.length} live requests
                         </span>
                       </div>
 
-                      <div className="space-y-2">
-                        {rec.supportingSignals.map((signal, sIdx) => {
-                          const queryUrl =
-                            signal.qloo_request?.url ||
-                            `https://hackathon.api.qloo.com/v2/insights?filter.type=${encodeURIComponent(
-                              signal.entityType
-                            )}&signal.interests.entities=${signal.entityId}&take=20`;
-                          const timestamp = new Date().toISOString();
+                      {/* Sub-section A: "The Qloo queries we ran" */}
+                      <div className="space-y-2.5">
+                        <h4 className="font-semibold text-stone-800">
+                          A. The Qloo queries we ran
+                        </h4>
+                        <div className="space-y-2">
+                          {rec.supportingSignals.map((signal, sIdx) => {
+                            const queryUrl =
+                              signal.qloo_request?.url ||
+                              `https://hackathon.api.qloo.com/v2/insights?filter.type=${encodeURIComponent(
+                                signal.entityType
+                              )}&signal.interests.entities=${signal.entityId}&take=20`;
 
-                          return (
-                            <div key={sIdx} className="space-y-1 rounded-xl bg-slate-950 border border-slate-800/80 p-3">
-                              <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-                                <span className="font-semibold text-emerald-400/90 truncate mr-2">
-                                  Signal: {signal.label} ({cleanDomain(signal.entityType)})
-                                </span>
-                                <span className="text-slate-500 shrink-0 text-[10px]">{timestamp}</span>
+                            return (
+                              <div
+                                key={sIdx}
+                                className="rounded-lg bg-white border border-stone-200 p-3 space-y-1.5"
+                              >
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="font-medium text-stone-800">
+                                    Signal: {signal.label}{" "}
+                                    <span className="text-stone-500">
+                                      ({cleanDomain(signal.entityType)})
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => copyToClipboard(queryUrl)}
+                                    className="text-[#1E4D3B] hover:underline font-medium cursor-pointer"
+                                  >
+                                    Copy URL
+                                  </button>
+                                </div>
+                                <div className="p-2 rounded bg-stone-50 border border-stone-200/80 font-mono text-[11px] text-stone-700 overflow-x-auto select-all">
+                                  <code>{queryUrl}</code>
+                                </div>
                               </div>
-                              <div className="flex items-center justify-between gap-2 p-2 rounded bg-slate-900/90 border border-slate-800 text-[11px] font-mono text-slate-300">
-                                <code className="truncate select-all">{queryUrl}</code>
-                                <button
-                                  onClick={() => copyToClipboard(queryUrl)}
-                                  className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 px-2 py-0.5 rounded bg-slate-800 shrink-0 transition"
-                                >
-                                  Copy
-                                </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Sub-section B: "Raw Qloo responses" */}
+                      <div className="space-y-2.5">
+                        <h4 className="font-semibold text-stone-800">
+                          B. Raw Qloo responses
+                        </h4>
+                        <div className="space-y-2">
+                          {rec.supportingSignals.map((signal, sIdx) => {
+                            const jsonKey = `${rec.entityId}-${sIdx}`;
+                            const isFull = Boolean(showFullJsonMap[jsonKey]);
+                            const relevantSlice = {
+                              entity_id: signal.entityId,
+                              name: signal.label,
+                              types: [signal.entityType],
+                              query: {
+                                affinity: signal.candidateAffinity ?? signal.affinity,
+                              },
+                            };
+                            const fullJson = signal.qloo_response || {
+                              status: "success",
+                              results: {
+                                entities: [relevantSlice],
+                              },
+                            };
+
+                            return (
+                              <div
+                                key={sIdx}
+                                className="rounded-lg bg-white border border-stone-200 p-3 space-y-1.5"
+                              >
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="font-medium text-stone-800">
+                                    Response for &quot;{signal.label}&quot;
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleFullJson(jsonKey)}
+                                    className="text-[#1E4D3B] hover:underline font-medium cursor-pointer"
+                                  >
+                                    {isFull ? "Show slice" : "Show full JSON ▾"}
+                                  </button>
+                                </div>
+                                <pre className="p-2.5 rounded bg-stone-50 border border-stone-200/80 text-[11px] font-mono text-stone-700 overflow-x-auto select-all max-h-52 overflow-y-auto">
+                                  {isFull
+                                    ? JSON.stringify(fullJson, null, 2)
+                                    : JSON.stringify(relevantSlice, null, 2)}
+                                </pre>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Sub-section B: "Raw Qloo responses" */}
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold text-slate-200">
-                        <span>B. Raw Qloo responses</span>
-                      </div>
-
-                      <div className="space-y-2">
-                        {rec.supportingSignals.map((signal, sIdx) => {
-                          const jsonKey = `${rec.entityId}-${sIdx}`;
-                          const isFull = Boolean(showFullJsonMap[jsonKey]);
-                          const relevantSlice = {
-                            entity_id: signal.entityId,
-                            name: signal.label,
-                            types: [signal.entityType],
-                            query: {
-                              affinity: signal.candidateAffinity ?? signal.affinity,
-                            },
-                          };
-                          const fullJson = signal.qloo_response || {
-                            status: "success",
-                            results: {
-                              entities: [relevantSlice],
-                            },
-                          };
-
-                          return (
-                            <div key={sIdx} className="space-y-1 rounded-xl bg-slate-950 border border-slate-800/80 p-3">
-                              <div className="flex items-center justify-between text-[11px] font-mono">
-                                <span className="text-slate-300 font-medium">
-                                  Response for &quot;{signal.label}&quot;
-                                </span>
-                                <button
-                                  onClick={() => toggleFullJson(jsonKey)}
-                                  className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2 transition cursor-pointer"
-                                >
-                                  {isFull ? "Show slice" : "Show full JSON ▾"}
-                                </button>
-                              </div>
-                              <pre className="p-2.5 rounded bg-slate-900/90 text-[10.5px] font-mono text-slate-300 overflow-x-auto select-all max-h-56 overflow-y-auto">
-                                {isFull
-                                  ? JSON.stringify(fullJson, null, 2)
-                                  : JSON.stringify(relevantSlice, null, 2)}
-                              </pre>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Sub-section C: "How we ranked it" */}
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold text-slate-200">
-                        <span>C. How we ranked it</span>
-                      </div>
-
-                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
-                        <div>
-                          <span className="text-slate-500">totalAffinity = </span>
-                          <span className="text-emerald-400 font-bold">{totalAffinityVal}</span>{" "}
-                          <span className="text-slate-500">(sum across all signals)</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">signalCount = </span>
-                          <span className="text-emerald-400 font-bold">{signalCountVal}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">noveltyBonus = </span>
-                          <span className="text-amber-400 font-bold">{noveltyBonusVal}</span>{" "}
-                          <span className="text-slate-500">
-                            ({isNewCategory ? "category is new to your catalog" : "matches catalog domain"})
-                          </span>
-                        </div>
-                        <div className="pt-2 border-t border-slate-800/80 text-slate-200">
-                          <span className="text-slate-500">score = </span>
-                          <span>
-                            {totalAffinityVal} × log({signalCountVal} + 1) × {noveltyBonusVal} ={" "}
-                          </span>
-                          <span className="text-emerald-400 font-bold">{rawScoreVal}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 italic mt-1 pt-1 border-t border-slate-900">
-                          {calcText}
+                            );
+                          })}
                         </div>
                       </div>
-                    </div>
 
-                    {/* Sub-section D: "Qloo entities that drove this decision" */}
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold text-slate-200 flex items-center justify-between">
-                        <span>D. Qloo entities that drove this decision</span>
-                        <span className="text-[11px] font-mono text-slate-500 font-normal">
-                          Click any ID to copy
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5 font-mono text-xs">
-                        {entityUrnList.map((urnId, uIdx) => (
-                          <div
-                            key={uIdx}
-                            onClick={() => copyToClipboard(urnId)}
-                            className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-900 transition cursor-pointer group"
-                            title="Click to copy entity URN"
-                          >
-                            <span className="text-slate-300 group-hover:text-emerald-300 font-mono text-[11px] truncate mr-2 select-all">
-                              {urnId}
-                            </span>
-                            <span className="text-[10px] text-slate-500 group-hover:text-emerald-400 shrink-0 font-mono bg-slate-900 group-hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800">
-                              Copy
+                      {/* Sub-section C: "How we ranked it" */}
+                      <div className="space-y-2.5">
+                        <h4 className="font-semibold text-stone-800">
+                          C. How we ranked it
+                        </h4>
+                        <div className="p-3.5 rounded-lg bg-white border border-stone-200 font-mono text-xs text-stone-700 space-y-1.5">
+                          <div>
+                            <span className="text-stone-500">totalAffinity = </span>
+                            <span className="text-[#1E4D3B] font-semibold">{totalAffinityVal}</span>{" "}
+                            <span className="text-stone-500 font-sans text-[11px]">
+                              (sum across all signals)
                             </span>
                           </div>
-                        ))}
+                          <div>
+                            <span className="text-stone-500">signalCount = </span>
+                            <span className="text-[#1E4D3B] font-semibold">{signalCountVal}</span>
+                          </div>
+                          <div>
+                            <span className="text-stone-500">noveltyBonus = </span>
+                            <span className="text-amber-700 font-semibold">{noveltyBonusVal}</span>{" "}
+                            <span className="text-stone-500 font-sans text-[11px]">
+                              ({isNewCategory ? "category is new to your catalog" : "matches catalog domain"})
+                            </span>
+                          </div>
+                          <div className="pt-2 border-t border-stone-200 text-stone-900">
+                            <span className="text-stone-500">score = </span>
+                            <span>
+                              {totalAffinityVal} × log({signalCountVal} + 1) × {noveltyBonusVal} ={" "}
+                            </span>
+                            <span className="text-[#1E4D3B] font-semibold">{rawScoreVal}</span>
+                          </div>
+                          <div className="text-[11px] text-stone-500 pt-1">
+                            {calcText}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Sub-section D: "Qloo entities that drove this decision" */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-stone-800">
+                            D. Qloo entities that drove this decision
+                          </h4>
+                          <span className="text-[11px] text-stone-500">
+                            Click any ID to copy
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-mono text-[11px]">
+                          {entityUrnList.map((urnId, uIdx) => (
+                            <button
+                              type="button"
+                              key={uIdx}
+                              onClick={() => copyToClipboard(urnId)}
+                              className="flex items-center justify-between p-2 rounded-md bg-white border border-stone-200 hover:border-[#1E4D3B] hover:bg-[#EDF5F0]/40 transition-colors cursor-pointer text-left group"
+                              title="Click to copy entity URN"
+                            >
+                              <span className="text-stone-700 group-hover:text-[#1E4D3B] truncate mr-2 select-all">
+                                {urnId}
+                              </span>
+                              <span className="text-[10px] font-sans font-medium text-stone-500 group-hover:text-[#1E4D3B] shrink-0 px-1.5 py-0.5 rounded bg-stone-100 group-hover:bg-white border border-stone-200">
+                                Copy
+                              </span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
-                )}
+                </article>
+              );
+            })}
+          </div>
+        )}
 
-                {/* Phase 9 Task 1: Memory Action Buttons (Below Why Panel) */}
-                <div className="pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-                    <span className="text-slate-500 font-semibold uppercase text-[10px] tracking-wider">
-                      Producer Decision:
-                    </span>
-                    {cardDecisions[rec.entityId] !== undefined ? (
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                          cardDecisions[rec.entityId]
-                            ? "bg-emerald-950/60 border-emerald-600/80 text-emerald-300"
-                            : "bg-rose-950/60 border-rose-600/80 text-rose-300"
-                        }`}
-                      >
-                        {cardDecisions[rec.entityId] ? "✓ Marked: I'll try this" : "✗ Marked: Not for us"}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 italic text-[11px]">Unsaved</span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleSaveDecision(rec, true)}
-                      disabled={savingRecId === rec.entityId}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium font-mono border transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
-                        cardDecisions[rec.entityId] === true
-                          ? "bg-emerald-900/60 border-emerald-500 text-emerald-200"
-                          : "bg-emerald-950/30 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-700"
-                      }`}
-                    >
-                      <span>I&apos;ll try this</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleSaveDecision(rec, false)}
-                      disabled={savingRecId === rec.entityId}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium font-mono border transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
-                        cardDecisions[rec.entityId] === false
-                          ? "bg-rose-900/60 border-rose-500 text-rose-200"
-                          : "bg-rose-950/30 border-rose-800/60 text-rose-300 hover:bg-rose-900/40 hover:border-rose-700"
-                      }`}
-                    >
-                      <span>Not for us</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Footer: Summary Line */}
-        <div className="pt-6 border-t border-slate-800 text-center space-y-3 font-mono text-xs text-slate-400">
+        {/* Bottom Summary Bar */}
+        <div className="pt-4 border-t border-stone-200 text-center space-y-3 text-xs text-stone-600">
           <p>
             This recommendation set used{" "}
-            <strong className="text-emerald-400 font-semibold">{totalUniqueEntities}</strong> Qloo entities
+            <strong className="text-stone-900 font-semibold tabular-nums">{totalUniqueEntities}</strong> Qloo entities
             across{" "}
-            <strong className="text-emerald-400 font-semibold">{Object.keys(domainCounts).length}</strong>{" "}
+            <strong className="text-stone-900 font-semibold tabular-nums">{Object.keys(domainCounts).length}</strong>{" "}
             domains.{" "}
             <button
+              type="button"
               onClick={() => setShowBreakdown((prev) => !prev)}
-              className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2 ml-1 cursor-pointer font-medium"
+              className="text-[#1E4D3B] hover:underline ml-1 cursor-pointer font-medium"
             >
-              {showBreakdown ? "[Hide breakdown]" : "[Show entity type breakdown]"}
+              {showBreakdown ? "Hide breakdown" : "Show entity breakdown"}
             </button>
           </p>
 
           {showBreakdown && (
-            <div className="max-w-md mx-auto p-4 rounded-xl bg-slate-900 border border-slate-800 text-left space-y-2 animate-in fade-in duration-200">
-              <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
-                Entity Types &amp; Counts
+            <div className="max-w-sm mx-auto p-3.5 rounded-lg bg-white border border-stone-200 text-left space-y-1.5 shadow-2xs">
+              <div className="text-[11px] text-stone-500 font-medium pb-1 border-b border-stone-100">
+                Entity domain distribution
               </div>
               {Object.entries(domainCounts).map(([dom, count]) => (
                 <div key={dom} className="flex justify-between items-center text-xs">
-                  <span className="capitalize text-slate-300">{dom}</span>
-                  <span className="text-emerald-400 font-bold">{count} entities</span>
+                  <span className="capitalize text-stone-700">{dom.replace("_", " ")}</span>
+                  <span className="text-[#1E4D3B] font-mono font-medium tabular-nums">
+                    {count} entities
+                  </span>
                 </div>
               ))}
             </div>
@@ -849,7 +1000,7 @@ export default function RecommendationsPage() {
         </div>
       </main>
 
-      {/* Cultural Graph Modal (Interactive react-force-graph-2d canvas) */}
+      {/* Cultural Graph Modal */}
       <CulturalGraphModal
         recommendation={graphModalRec}
         sourceProducts={sourceProducts}
@@ -857,9 +1008,13 @@ export default function RecommendationsPage() {
         onOpenChange={(open) => !open && setGraphModalRec(null)}
       />
 
-      {/* Global Toast */}
+      {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-slate-900 border border-emerald-500/50 text-slate-100 px-4 py-3 rounded-xl shadow-2xl text-xs font-mono animate-in fade-in slide-in-from-bottom-2">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-stone-900 text-white px-4 py-2.5 rounded-lg shadow-lg text-xs font-medium"
+        >
           <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>

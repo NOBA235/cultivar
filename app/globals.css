@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fbfcfa;
+  --foreground: #17211b;
+  --surface: #ffffff;
+  --surface-subtle: #f5f7f4;
+  --border-subtle: #e7ebe6;
+  --border-strong: #d8dfd8;
+  --accent: #24634a;
+  --accent-hover: #194c38;
+  --accent-soft: #eef6f0;
+  --accent-border: #cfe2d4;
 }
 
 @theme inline {
@@ -12,15 +20,174 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+body {
+  background:
+    radial-gradient(ellipse at 50% -18rem, rgba(214, 233, 219, 0.34), transparent 58rem),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(36, 99, 74, 0.16);
+  color: #173a2b;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+button,
+a,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:not(:disabled),
+a[href],
+select:not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* A consistent, tactile surface treatment across the workspace screens. */
+main :is(section, article, div)[class*="rounded-xl"][class*="bg-white"] {
+  box-shadow: 0 1px 2px rgba(20, 35, 25, 0.025), 0 8px 24px rgba(20, 35, 25, 0.025);
+}
+
+main :is(section, article, div)[class*="rounded-xl"][class*="bg-white"]:hover {
+  border-color: #dce5dc;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Focus visibility for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Responsive data table pattern (container-query adaptive table) */
+.table-wrapper {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(640px, 80dvh);
+  container-type: inline-size;
+}
+
+.responsive-data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  --label-2: "Matched Entity";
+  --label-3: "Qloo ID";
+  --label-4: "Type";
+  --label-5: "Confidence";
+  --label-6: "Action";
+}
+
+.responsive-data-table thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+}
+
+.responsive-data-table tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  background: #ffffff;
+}
+
+@container (width < 600px) {
+  .responsive-data-table,
+  .responsive-data-table thead,
+  .responsive-data-table tbody,
+  .responsive-data-table tr,
+  .responsive-data-table th,
+  .responsive-data-table td {
+    display: block;
+  }
+
+  .responsive-data-table thead {
+    /* MANDATORY: Hide column header from layout and screen readers. */
+    display: none;
+  }
+
+  .responsive-data-table tbody tr {
+    margin-block-end: 0.75rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    background: #ffffff;
+    overflow: hidden;
+  }
+
+  .responsive-data-table tbody th {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+    background: var(--surface-subtle);
+    border-block-end: 1px solid var(--border-subtle);
+  }
+
+  .responsive-data-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-block-end: 1px solid #f1efea;
+  }
+
+  .responsive-data-table td:last-child {
+    border-block-end: none;
+  }
+
+  .responsive-data-table td:nth-child(2)::before {
+    content: var(--label-2) ": ";
+    font-weight: 500;
+    color: #57534e;
+    font-size: 0.75rem;
+  }
+
+  .responsive-data-table td:nth-child(3)::before {
+    content: var(--label-3) ": ";
+    font-weight: 500;
+    color: #57534e;
+    font-size: 0.75rem;
+  }
+
+  .responsive-data-table td:nth-child(4)::before {
+    content: var(--label-4) ": ";
+    font-weight: 500;
+    color: #57534e;
+    font-size: 0.75rem;
+  }
+
+  .responsive-data-table td:nth-child(5)::before {
+    content: var(--label-5) ": ";
+    font-weight: 500;
+    color: #57534e;
+    font-size: 0.75rem;
+  }
+
+  .responsive-data-table td:nth-child(6)::before {
+    content: var(--label-6) ": ";
+    font-weight: 500;
+    color: #57534e;
+    font-size: 0.75rem;
+  }
 }

@@ -13,7 +13,6 @@ export default function HistoryPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Rerun & Diff states
   const [rerunningId, setRerunningId] = useState<string | null>(null);
   const [diffResult, setDiffResult] = useState<{
     original: StoredRecommendation;
@@ -46,26 +45,24 @@ export default function HistoryPage() {
   }, [fetchRecords]);
 
   const handleClearMemory = async () => {
-    if (!confirm("Are you sure you want to clear all historical memory records?")) return;
+    if (!confirm("Are you sure you want to clear all saved history records?")) return;
     try {
       const res = await fetch("/api/memory", { method: "DELETE" });
       if (res.ok) {
         setRecords([]);
         setDiffResult(null);
-        showToast("Memory cleared.");
+        showToast("History cleared.");
       }
     } catch {
-      showToast("Failed to clear memory.");
+      showToast("Failed to clear history.");
     }
   };
 
-  // Phase 9: "Rerun this analysis" button that re-runs the pipeline and diffs results
   const handleRerunAnalysis = async (record: StoredRecommendation) => {
     setRerunningId(record.id);
     setDiffResult(null);
 
     try {
-      // 1. Get resolved catalog from sessionStorage or fallback
       let resolved: ResolvedEntity[] = [];
       const rawResolved = sessionStorage.getItem("cultivar:resolved");
       if (rawResolved) {
@@ -76,12 +73,11 @@ export default function HistoryPage() {
       }
 
       if (resolved.length === 0) {
-        showToast("No active catalog found. Load demo catalog on homepage first.");
+        showToast("No active catalog found. Load a catalog on the Upload screen first.");
         setRerunningId(null);
         return;
       }
 
-      // 2. Call POST /api/recommend with original target month if present
       const res = await fetch("/api/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,7 +97,6 @@ export default function HistoryPage() {
         throw new Error("No recommendations returned");
       }
 
-      // 3. Diff against the top current recommendation
       const topCurrent = currentRecs[0];
 
       setDiffResult({
@@ -109,10 +104,10 @@ export default function HistoryPage() {
         current: topCurrent,
       });
 
-      showToast(`Analysis completed. Diffs generated against ${record.recommendation.name}.`);
+      showToast(`Re-run complete. Comparing against ${record.recommendation.name}.`);
     } catch (err) {
       console.error("Rerun analysis error:", err);
-      showToast("Analysis rerun failed.");
+      showToast("Analysis re-run failed.");
     } finally {
       setRerunningId(null);
     }
@@ -129,245 +124,286 @@ export default function HistoryPage() {
   }, [records]);
 
   return (
-    <div className="flex-1 flex flex-col justify-between selection:bg-emerald-500/30">
-      {/* Sub-bar */}
-      <div className="border-b border-slate-900 bg-slate-950/40 px-6 py-2.5">
-        <div className="max-w-5xl mx-auto flex items-center justify-between font-mono text-xs">
-          <button
-            onClick={() => router.push("/recommendations")}
-            className="text-slate-400 hover:text-emerald-400 transition flex items-center gap-1.5 cursor-pointer"
-            title="Return to Recommendations"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            Recommendations
-          </button>
-
-          <div className="flex items-center gap-3">
-            {records.length > 0 && (
-              <button
-                onClick={handleClearMemory}
-                className="text-slate-400 hover:text-rose-400 px-2.5 py-0.5 rounded border border-slate-800 hover:border-rose-900/50 bg-slate-900 transition font-mono cursor-pointer text-[11px]"
-              >
-                Clear Memory
-              </button>
-            )}
-
-            <div className="flex items-center gap-2 text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300">
-              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
-              Persistent JSON Store
-            </div>
+    <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+      {/* Page Header */}
+      <div className="flex flex-col justify-between gap-4 border-b border-[#e7ece6] pb-6 sm:flex-row sm:items-end">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-xs text-stone-500">
+            <button
+              type="button"
+              onClick={() => router.push("/recommendations")}
+              className="hover:text-stone-900 transition-colors inline-flex items-center gap-1 cursor-pointer"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Recommendations
+            </button>
+            <span aria-hidden="true">/</span>
+            <span>History</span>
           </div>
+          <h1 className="text-2xl font-semibold tracking-[-0.04em] text-[#17211b] sm:text-3xl">
+            Saved decisions &amp; analysis history
+          </h1>
+          <p className="text-sm text-stone-600">
+            Review past product evaluations, seasonal launch targets, and re-run analyses to compare shifts.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <span className="text-xs px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 font-medium tabular-nums">
+            Accepted: {acceptedCount}
+          </span>
+          <span className="text-xs px-2.5 py-1 rounded-md bg-rose-50 border border-rose-200 text-rose-800 font-medium tabular-nums">
+            Rejected: {rejectedCount}
+          </span>
+          {records.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearMemory}
+              className="text-xs px-2.5 py-1 rounded-md bg-white hover:bg-rose-50 text-stone-600 hover:text-rose-800 border border-stone-200 hover:border-rose-200 transition-colors cursor-pointer font-medium"
+            >
+              Clear history
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Main Content */}
-      <main className="max-w-5xl mx-auto px-6 py-8 flex-1 w-full space-y-6">
-        {/* Title */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-              Producer Memory &amp; Historical Runs
-            </h1>
-            <p className="text-sm text-slate-400 mt-1 max-w-2xl">
-              Cultivar remembers accepted ideas and rejected proposals across sessions. When re-running the pipeline,
-              the explanation agent checks historical decisions to personalize future cultural insights.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 font-mono text-xs shrink-0">
-            <div className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Accepted: <strong className="text-emerald-300">{acceptedCount}</strong></span>
+      {/* Analysis Re-Run Diff Panel */}
+      {diffResult && (
+        <section
+          aria-labelledby="diff-heading"
+          className="space-y-4 rounded-2xl border border-[#cfe2d4] bg-white p-5 shadow-[0_8px_28px_rgba(27,53,35,.04)]"
+        >
+          <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#1E4D3B]" />
+              <h2 id="diff-heading" className="text-sm font-semibold text-stone-900">
+                Analysis re-run comparison
+              </h2>
             </div>
-            <div className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-rose-400" />
-              <span>Rejected: <strong className="text-rose-300">{rejectedCount}</strong></span>
-            </div>
-          </div>
-        </div>
-
-        {/* Diff View Box (Rendered when "Rerun this analysis" is clicked) */}
-        {diffResult && (
-          <div className="p-6 rounded-2xl bg-emerald-950/20 border border-emerald-900/60 space-y-4 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                <h2 className="text-base font-bold text-white font-mono">
-                  Analysis Re-Run Diff vs. Past Memory
-                </h2>
-              </div>
-              <button
-                onClick={() => setDiffResult(null)}
-                className="text-xs text-slate-400 hover:text-white font-mono"
-              >
-                [Dismiss Diff]
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 font-mono text-xs">
-              {/* Left: Original Record */}
-              <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between text-slate-500 uppercase text-[10px] tracking-wider">
-                  <span>Historical Record</span>
-                  <span>{new Date(diffResult.original.savedAt).toLocaleDateString()}</span>
-                </div>
-                <div className="text-sm font-bold text-slate-200">
-                  {diffResult.original.recommendation.name}
-                </div>
-                <div className="text-slate-400">
-                  Category: {diffResult.original.recommendation.category} &bull; Confidence: {diffResult.original.recommendation.confidence}%
-                </div>
-                <div className="pt-2 text-slate-400 flex items-center gap-1.5">
-                  <span>Producer Decision:</span>
-                  <span className={diffResult.original.accepted ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
-                    {diffResult.original.accepted ? "Accepted (I'll try this)" : "Rejected (Not for us)"}
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-500 pt-1">
-                  Signals: {diffResult.original.recommendation.supportingSignals.map((s) => s.label).join(", ")}
-                </div>
-              </div>
-
-              {/* Right: Current Re-Run */}
-              <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-900/50 space-y-2">
-                <div className="flex items-center justify-between text-emerald-400 uppercase text-[10px] tracking-wider">
-                  <span>Current Pipeline Re-Run</span>
-                  <span>Just now</span>
-                </div>
-                <div className="text-sm font-bold text-emerald-300">
-                  {diffResult.current.name}
-                </div>
-                <div className="text-slate-300">
-                  Category: {diffResult.current.category} &bull; Confidence: {diffResult.current.confidence}%
-                </div>
-                <div className="pt-2 text-slate-300">
-                  <span className="text-slate-500">Signal Shift: </span>
-                  {diffResult.original.recommendation.name === diffResult.current.name
-                    ? "Consistent recommendation with refreshed signal affinities."
-                    : `Shifted from ${diffResult.original.recommendation.name} due to active cross-domain affinity adjustments.`}
-                </div>
-                <div className="text-[11px] text-slate-400 pt-1">
-                  Signals: {diffResult.current.supportingSignals.map((s) => s.label).join(", ")}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* History Records Table / Cards */}
-        {isLoading ? (
-          <div className="p-12 text-center text-slate-500 font-mono text-sm">
-            <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            Loading historical memory...
-          </div>
-        ) : records.length === 0 ? (
-          <div className="p-12 text-center rounded-2xl bg-slate-900/40 border border-slate-800 space-y-4">
-            <div className="text-slate-400 font-mono text-sm">
-              No recommendations saved to memory yet.
-            </div>
-            <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Navigate to the Recommendations Dashboard and click <strong className="text-emerald-400">[I&apos;ll try this]</strong> or <strong className="text-rose-400">[Not for us]</strong> on any card to record a decision in <code className="text-slate-300 font-mono">/data/memory.json</code>.
-            </p>
             <button
-              onClick={() => router.push("/recommendations")}
-              className="px-4 py-2 text-xs font-mono font-medium rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition cursor-pointer"
+              type="button"
+              onClick={() => setDiffResult(null)}
+              className="text-xs text-stone-500 hover:text-stone-900 font-medium cursor-pointer"
             >
-              Go to Recommendations
+              Dismiss
             </button>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {records.map((record, idx) => {
-              const rec = record.recommendation;
-              const dateStr = new Date(record.savedAt).toLocaleString();
-              const isRerunning = rerunningId === record.id;
-              const monthLabel = record.month ? MONTH_NAMES[record.month] : undefined;
 
-              return (
-                <div
-                  key={record.id || idx}
-                  className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700/80 transition flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono text-xs"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            {/* Saved Historical Record */}
+            <div className="p-4 rounded-lg bg-stone-50 border border-stone-200 space-y-2">
+              <div className="flex items-center justify-between text-stone-500 font-medium">
+                <span>Saved record</span>
+                <span>{new Date(diffResult.original.savedAt).toLocaleDateString()}</span>
+              </div>
+              <div className="text-sm font-semibold text-stone-900">
+                {diffResult.original.recommendation.name}
+              </div>
+              <div className="text-stone-600">
+                Category: {diffResult.original.recommendation.category} &bull; Confidence:{" "}
+                <span className="font-mono font-medium">
+                  {diffResult.original.recommendation.confidence}%
+                </span>
+              </div>
+              <div className="pt-1 flex items-center gap-1.5">
+                <span className="text-stone-500">Decision:</span>
+                <span
+                  className={
+                    diffResult.original.accepted
+                      ? "text-emerald-800 font-medium"
+                      : "text-rose-800 font-medium"
+                  }
                 >
-                  {/* Left Info */}
-                  <div className="space-y-2 max-w-xl">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                          record.accepted
-                            ? "bg-emerald-950/70 border-emerald-600/80 text-emerald-300"
-                            : "bg-rose-950/70 border-rose-600/80 text-rose-300"
-                        }`}
-                      >
-                        {record.accepted ? "✓ Accepted (I'll try this)" : "✗ Rejected (Not for us)"}
+                  {diffResult.original.accepted
+                    ? "Accepted (I'll try this)"
+                    : "Rejected (Not for us)"}
+                </span>
+              </div>
+              <div className="text-stone-500 pt-1">
+                Signals:{" "}
+                {diffResult.original.recommendation.supportingSignals
+                  .map((s) => s.label)
+                  .join(", ")}
+              </div>
+            </div>
+
+            {/* Current Re-run */}
+            <div className="p-4 rounded-lg bg-[#EDF5F0]/50 border border-[#C5DFD0] space-y-2">
+              <div className="flex items-center justify-between text-[#1E4D3B] font-medium">
+                <span>Current pipeline re-run</span>
+                <span>Just now</span>
+              </div>
+              <div className="text-sm font-semibold text-stone-900">
+                {diffResult.current.name}
+              </div>
+              <div className="text-stone-700">
+                Category: {diffResult.current.category} &bull; Confidence:{" "}
+                <span className="font-mono font-medium">{diffResult.current.confidence}%</span>
+              </div>
+              <div className="pt-1 text-stone-700">
+                <span className="text-stone-500">Comparison: </span>
+                {diffResult.original.recommendation.name === diffResult.current.name
+                  ? "Matches historical top recommendation with current signal affinities."
+                  : `Shifted from ${diffResult.original.recommendation.name} based on current catalog and seasonal weights.`}
+              </div>
+              <div className="text-stone-600 pt-1">
+                Signals: {diffResult.current.supportingSignals.map((s) => s.label).join(", ")}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Records List */}
+      {isLoading ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="p-5 rounded-xl bg-white border border-stone-200 flex justify-between items-center"
+            >
+              <div className="space-y-2 w-2/3">
+                <div className="h-4 w-32 bg-stone-200 rounded animate-pulse" />
+                <div className="h-5 w-48 bg-stone-200 rounded animate-pulse" />
+                <div className="h-3.5 w-64 bg-stone-100 rounded animate-pulse" />
+              </div>
+              <div className="h-8 w-32 bg-stone-100 rounded animate-pulse" />
+            </div>
+          ))}
+        </div>
+      ) : records.length === 0 ? (
+        <div className="p-10 text-center rounded-xl bg-white border border-stone-200 shadow-2xs space-y-3">
+          <div className="text-stone-900 font-medium text-sm">
+            No saved recommendations yet
+          </div>
+          <p className="text-xs text-stone-500 max-w-md mx-auto leading-relaxed">
+            Record a decision using <strong>I&apos;ll try this</strong> or{" "}
+            <strong>Not for us</strong> on any recommendation card to track your product evaluations over time.
+          </p>
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => router.push("/recommendations")}
+              className="px-4 py-2 text-xs font-medium rounded-lg bg-[#1E4D3B] hover:bg-[#163B2D] text-white transition-colors cursor-pointer"
+            >
+              View recommendations
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {records.map((record, idx) => {
+            const rec = record.recommendation;
+            const dateStr = new Date(record.savedAt).toLocaleString();
+            const isRerunning = rerunningId === record.id;
+            const monthLabel = record.month ? MONTH_NAMES[record.month] : undefined;
+
+            return (
+              <div
+                key={record.id || idx}
+                className="p-5 rounded-xl bg-white border border-stone-200 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs"
+              >
+                <div className="space-y-2 max-w-2xl">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
+                        record.accepted
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                          : "bg-rose-50 border-rose-200 text-rose-800"
+                      }`}
+                    >
+                      {record.accepted
+                        ? "Accepted — I'll try this"
+                        : "Rejected — Not for us"}
+                    </span>
+
+                    {monthLabel && (
+                      <span className="px-2 py-0.5 rounded bg-stone-100 border border-stone-200 text-stone-700 font-medium">
+                        Target: {monthLabel}
                       </span>
+                    )}
 
-                      <span className="text-slate-500 text-[11px]">{dateStr}</span>
+                    <span className="text-stone-500">{dateStr}</span>
+                  </div>
 
-                      {monthLabel && (
-                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
-                          Target: {monthLabel}
-                        </span>
-                      )}
-                    </div>
-
-                    <div>
-                      <h3 className="text-base font-bold text-white tracking-tight">
-                        {rec.name}
-                      </h3>
-                      <div className="text-slate-400 mt-0.5 text-xs">
-                        Category: <span className="text-slate-200">{rec.category}</span> &bull; Qloo Confidence:{" "}
-                        <span className="text-emerald-400">{rec.confidence}%</span>
-                      </div>
-                    </div>
-
-                    <div className="text-[11px] text-slate-400">
-                      <span className="text-slate-500">Supporting Signals ({rec.supportingSignals.length}): </span>
-                      {rec.supportingSignals.slice(0, 4).map((s) => s.label).join(", ")}
-                      {rec.supportingSignals.length > 4 && " ..."}
+                  <div>
+                    <h3 className="text-base font-semibold text-stone-900">
+                      {rec.name}
+                    </h3>
+                    <div className="text-stone-600 mt-0.5">
+                      Category: <span className="text-stone-800 font-medium">{rec.category}</span>{" "}
+                      &bull; Confidence:{" "}
+                      <span className="font-mono font-medium text-[#1E4D3B] tabular-nums">
+                        {rec.confidence}%
+                      </span>
                     </div>
                   </div>
 
-                  {/* Right Actions */}
-                  <div className="flex items-center gap-3 shrink-0">
-                    <button
-                      onClick={() => handleRerunAnalysis(record)}
-                      disabled={isRerunning}
-                      className="px-3.5 py-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-800/60 hover:border-emerald-700 text-emerald-300 text-xs font-mono transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      {isRerunning ? (
-                        <>
-                          <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                          <span>Re-running...</span>
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                          <span>Rerun this analysis</span>
-                        </>
-                      )}
-                    </button>
+                  <div className="text-stone-500">
+                    <span className="font-medium text-stone-600">
+                      Supporting signals ({rec.supportingSignals.length}):{" "}
+                    </span>
+                    {rec.supportingSignals
+                      .slice(0, 4)
+                      .map((s) => s.label)
+                      .join(", ")}
+                    {rec.supportingSignals.length > 4 && " ..."}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleRerunAnalysis(record)}
+                    disabled={isRerunning}
+                    className="px-3.5 py-2 rounded-lg bg-white hover:bg-stone-50 border border-stone-300 text-stone-800 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50 shadow-2xs"
+                  >
+                    {isRerunning ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-[#1E4D3B] border-t-transparent rounded-full animate-spin" />
+                        <span>Re-running...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg
+                          className="w-3.5 h-3.5 text-[#1E4D3B]"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                          />
+                        </svg>
+                        <span>Rerun this analysis</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-slate-900 border border-emerald-500/50 text-slate-100 px-4 py-3 rounded-xl shadow-2xl text-xs font-mono animate-in fade-in slide-in-from-bottom-2">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-stone-900 text-white px-4 py-2.5 rounded-lg shadow-lg text-xs font-medium"
+        >
           <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
           <span>{toastMessage}</span>
         </div>
       )}
-    </div>
+    </main>
   );
 }
-

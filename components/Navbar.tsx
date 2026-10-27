@@ -15,46 +15,39 @@ export function Navbar() {
   ];
 
   return (
-    <header className="border-b border-slate-800/80 px-4 sm:px-6 py-3.5 backdrop-blur-md bg-slate-950/80 sticky top-0 z-40 transition-all">
-      <div className="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* Brand Logo & Cultivar Name */}
-        <div className="flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="h-8 w-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center font-black text-emerald-400 group-hover:bg-emerald-500/25 transition">
-              <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+    <header className="sticky top-0 z-40 border-b border-[#e9ede8] bg-white/90 backdrop-blur-xl">
+      <div className="mx-auto flex min-h-[68px] max-w-7xl flex-col justify-between gap-2 px-4 py-2.5 sm:flex-row sm:items-center sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-4">
+          <Link href="/" className="group flex items-center gap-3 rounded-lg" aria-label="Cultivar home">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1e513a] text-white shadow-[0_3px_8px_rgba(30,81,58,.18)] transition-transform group-hover:-rotate-3">
+              <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d="M12 21c-4.5-2.6-7-6.1-7-10.4C5 6.7 8.1 4 12 4s7 2.7 7 6.6c0 4.3-2.5 7.8-7 10.4Zm0 0V9m0 4c-1.8-1.6-3.3-2.2-5.3-2.4m5.3-.1c1.6-1.5 3.2-2.1 5.2-2.3" />
               </svg>
-            </div>
-            <div>
-              <span className="font-bold tracking-tight text-white text-base sm:text-lg group-hover:text-emerald-300 transition">
-                Cultivar
-              </span>
-              <span className="text-[11px] text-slate-500 ml-2 font-mono hidden md:inline">
-                Cultural Supply Chain Intelligence
-              </span>
-            </div>
+            </span>
+            <span className="leading-tight">
+              <span className="block text-[15px] font-semibold tracking-[-0.04em] text-[#17211b]">Cultivar</span>
+              <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-[0.14em] text-stone-500">Product intelligence</span>
+            </span>
           </Link>
-
-          {/* Mobile Status Dot */}
-          <div className="sm:hidden flex items-center gap-1.5 text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Qloo Taste Graph</span>
-          </div>
+          <span className="flex items-center gap-2 rounded-full border border-[#e8eee8] bg-[#f7faf7] px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:hidden">
+            <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-30" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" /></span>
+            Qloo connected
+          </span>
         </div>
 
-        {/* Navigation Links */}
-        <div className="flex items-center justify-between sm:justify-end gap-1.5 overflow-x-auto py-0.5 scrollbar-none font-mono text-xs">
-          <nav className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-4 sm:justify-end">
+          <nav aria-label="Primary workspace navigation" className="flex w-full items-center gap-1 overflow-x-auto sm:w-auto">
             {navLinks.map((link) => {
               const isActive = pathname === link.href;
               return (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`px-2.5 py-1.5 rounded-lg transition-all font-medium whitespace-nowrap ${
+                  aria-current={isActive ? "page" : undefined}
+                  className={`relative whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:text-[13px] ${
                     isActive
-                      ? "bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 shadow-sm"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-900/80 border border-transparent"
+                      ? "bg-[#eef5ef] text-[#23573d]"
+                      : "text-stone-500 hover:bg-stone-50 hover:text-stone-900"
                   }`}
                 >
                   {link.label}
@@ -62,11 +55,9 @@ export function Navbar() {
               );
             })}
           </nav>
-
-          {/* Desktop Status Badge */}
-          <div className="hidden sm:flex items-center gap-2 text-xs font-mono px-2.5 py-1 rounded-full bg-slate-900/90 border border-slate-800 text-slate-300 shrink-0 ml-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px]">Qloo Taste Graph</span>
+          <div className="hidden items-center gap-2 border-l border-stone-200 pl-4 text-[11px] text-stone-500 md:flex">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#edf4ee] text-[10px] font-semibold text-[#23573d]">CQ</span>
+            <span className="whitespace-nowrap">Taste Graph <span className="ml-1 text-emerald-700">●</span></span>
           </div>
         </div>
       </div>

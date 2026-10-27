@@ -15,14 +15,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cultivar — Cultural Supply Chain Intelligence for Independent Producers",
+  title: "Cultivar — Product Intelligence for Independent Producers",
   description:
-    "Grounded in Qloo's cross-domain taste graph across dining, music, film, and fashion affinities. Full algorithmic audit trails, seasonality shifts, and memory.",
+    "Upload a product catalog, resolve items against Qloo, and evaluate culturally grounded product opportunities with full evidence trails.",
   keywords: [
     "Qloo",
     "Cultural Intelligence",
     "Food Producers",
-    "Supply Chain",
+    "Product Planning",
     "Taste Graph",
     "Gemini 2.5 Flash",
     "Cultivar",
@@ -32,7 +32,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -41,9 +40,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark scroll-smooth">
+    <html lang="en" className="scroll-smooth">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-emerald-500/30`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-dvh flex flex-col justify-between font-sans antialiased text-stone-900`}
       >
         <Navbar />
         <div className="flex-1 flex flex-col">{children}</div>
