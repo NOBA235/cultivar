@@ -23,6 +23,9 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files: secrets stay local, the key-less template is committed
+.env
+.env.local
+.env*.local
 .env*
 !.env.example
 
