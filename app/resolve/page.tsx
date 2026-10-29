@@ -169,7 +169,7 @@ export default function ResolvePage() {
       return (
         <span
           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium font-mono tabular-nums bg-emerald-50 text-emerald-800 border border-emerald-200"
-          title={`Confidence: ${formatted} (> 0.8)`}
+          title={`Name match: ${formatted} (> 0.8, local string similarity)`}
         >
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
           {formatted}
@@ -180,7 +180,7 @@ export default function ResolvePage() {
       return (
         <span
           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium font-mono tabular-nums bg-amber-50 text-amber-800 border border-amber-200"
-          title={`Confidence: ${formatted} (0.5 – 0.8)`}
+          title={`Name match: ${formatted} (0.5 – 0.8, local string similarity)`}
         >
           <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
           {formatted}
@@ -190,7 +190,7 @@ export default function ResolvePage() {
     return (
       <span
         className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium font-mono tabular-nums bg-rose-50 text-rose-800 border border-rose-200"
-        title={`Confidence: ${formatted} (< 0.5)`}
+        title={`Name match: ${formatted} (< 0.5, local string similarity)`}
       >
         <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
         {formatted}
@@ -283,7 +283,9 @@ export default function ResolvePage() {
                     Type
                   </th>
                   <th scope="col" className="py-3 px-4 border-b border-stone-200">
-                    Confidence
+                    <span title="Local string-similarity heuristic (0–1.0) between catalog product and matched Qloo entity name. Not a Qloo API score.">
+                      Name Match (Local)
+                    </span>
                   </th>
                   <th scope="col" className="py-3 px-4 border-b border-stone-200 text-right">
                     Action

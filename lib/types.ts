@@ -21,6 +21,12 @@ export interface CulturalSignal {
   // Qloo affinity between this signal and the entity it was found for
   // (the product's Qloo entity in stage 2).
   affinity: number;
+  // Illustrative seasonal keyword weight (not Qloo data). Only changes which
+  // signals are prioritised for stage 3; `affinity` above stays the raw Qloo value.
+  seasonalMultiplier?: number;
+  // Catalog product name(s) and Qloo entity ID(s) that surfaced this signal in stage 2.
+  sourceProduct?: string;
+  sourceEntityId?: string;
   // Set in stage 3: Qloo's affinity between this signal and the candidate
   // it helped surface (the number that explains the recommendation).
   candidateAffinity?: number;
@@ -70,6 +76,7 @@ export interface Recommendation {
   confidence: number;
   supportingSignals: CulturalSignal[];
   explanation?: string;
+  explanationFallback?: boolean;
   // Audit trail of tool calls and raw Qloo details for the "Why Panel"
   qloo_request?: QlooRequestAudit | null;
   qloo_response?: unknown | null;

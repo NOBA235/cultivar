@@ -9,9 +9,11 @@ import type { StoredRecommendation } from "./memory";
 // ---------- /api/explain ----------
 
 export const EXPLAIN_INSTRUCTION =
-  "Write ONE sentence explaining why this recommendation follows from the cultural signals. " +
-  "When making a recommendation, check if the producer has accepted or rejected similar recommendations before. " +
-  "If so, explain why this one is different or similar, citing the past recommendation in your sentence. Maximum 35 words.";
+  "You are writing for an independent coffee roaster. The recommendation is an EXISTING brand found in Qloo's taste graph, " +
+  "offered as a cultural or brand inspiration (positioning, partnership, or flavor/packaging cue), not a new product and not a sales forecast. " +
+  "Write ONE sentence explaining the cultural link using only the signals and Qloo affinity scores provided. " +
+  "Qloo affinity measures audience taste overlap; never describe it as demand, sales, market size, or probability of success. " +
+  "If the producer has accepted or rejected similar recommendations before, you may briefly note how this one compares. Maximum 35 words.";
 
 export const EXPLAIN_MAX_WORDS = 35;
 
@@ -37,8 +39,9 @@ export function buildExplainPrompt(
   const signals = rec.supportingSignals.map(
     (s) =>
       `- "${s.label}" (${s.entityType}, Qloo ID ${s.entityId}): ` +
-      `affinity with "${rec.name}" = ${score(s.candidateAffinity)}; ` +
-      `affinity with the producer's catalog = ${score(s.affinity)}`,
+      `signal-to-"${rec.name}" affinity = ${score(s.candidateAffinity)}; ` +
+      `catalog-to-signal affinity = ${score(s.affinity)}` +
+      (s.sourceProduct ? ` (via catalog item "${s.sourceProduct}")` : ""),
   );
 
   const memoryContext: string[] = [];
@@ -54,7 +57,7 @@ export function buildExplainPrompt(
   }
 
   return [
-    `Recommendation: "${rec.name}" (category: ${rec.category}, Qloo ID ${rec.entityId}, relative confidence ${rec.confidence}/100)`,
+    `Brand inspiration: "${rec.name}" (Qloo category tag: ${rec.category}, Qloo ID ${rec.entityId}, relative rank score ${rec.confidence}/100 where #1 = 100; not a probability)`,
     "",
     "Cultural signals from Qloo's taste graph (affinity scores are Qloo's, higher = stronger audience overlap):",
     ...signals,

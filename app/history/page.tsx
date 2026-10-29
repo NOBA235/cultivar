@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { StoredRecommendation } from "@/lib/memory";
 import type { Recommendation, ResolvedEntity } from "@/lib/types";
 import { MONTH_NAMES } from "@/lib/seasonal";
+import { readLocalMemory, clearLocalMemory, mergeMemory } from "@/lib/localMemory";
 
 export default function HistoryPage() {
   const router = useRouter();
@@ -26,19 +27,21 @@ export default function HistoryPage() {
 
   const fetchRecords = useCallback(async () => {
     setIsLoading(true);
+    const local = readLocalMemory();
+    let server: StoredRecommendation[] = [];
     try {
       const res = await fetch("/api/memory");
       if (res.ok) {
         const data = await res.json();
-        setRecords(Array.isArray(data.records) ? data.records : []);
+        if (Array.isArray(data.records)) server = data.records;
       }
     } catch (err) {
-      console.error("Failed to fetch memory records:", err);
-      showToast("Failed to load history.");
+      console.warn("Failed to fetch server memory file:", err);
     } finally {
+      setRecords(mergeMemory(local, server));
       setIsLoading(false);
     }
-  }, [showToast]);
+  }, []);
 
   useEffect(() => {
     fetchRecords();
@@ -46,16 +49,15 @@ export default function HistoryPage() {
 
   const handleClearMemory = async () => {
     if (!confirm("Are you sure you want to clear all saved history records?")) return;
+    clearLocalMemory();
     try {
-      const res = await fetch("/api/memory", { method: "DELETE" });
-      if (res.ok) {
-        setRecords([]);
-        setDiffResult(null);
-        showToast("History cleared.");
-      }
-    } catch {
-      showToast("Failed to clear history.");
+      await fetch("/api/memory", { method: "DELETE" });
+    } catch (err) {
+      console.warn("Failed to clear server memory:", err);
     }
+    setRecords([]);
+    setDiffResult(null);
+    showToast("History cleared.");
   };
 
   const handleRerunAnalysis = async (record: StoredRecommendation) => {
@@ -143,10 +145,10 @@ export default function HistoryPage() {
             <span>History</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-[-0.04em] text-[#17211b] sm:text-3xl">
-            Saved decisions &amp; analysis history
+            Saved evaluations &amp; analysis history
           </h1>
           <p className="text-sm text-stone-600">
-            Review past product evaluations, seasonal launch targets, and re-run analyses to compare shifts.
+            Review past product evaluations (stored in browser-local memory and local demo file). Re-run analyses to compare ranking shifts.
           </p>
         </div>
 
@@ -202,9 +204,9 @@ export default function HistoryPage() {
                 {diffResult.original.recommendation.name}
               </div>
               <div className="text-stone-600">
-                Category: {diffResult.original.recommendation.category} &bull; Confidence:{" "}
+                Category: {diffResult.original.recommendation.category} &bull; Relative rank score:{" "}
                 <span className="font-mono font-medium">
-                  {diffResult.original.recommendation.confidence}%
+                  {diffResult.original.recommendation.confidence} / 100
                 </span>
               </div>
               <div className="pt-1 flex items-center gap-1.5">
@@ -239,8 +241,8 @@ export default function HistoryPage() {
                 {diffResult.current.name}
               </div>
               <div className="text-stone-700">
-                Category: {diffResult.current.category} &bull; Confidence:{" "}
-                <span className="font-mono font-medium">{diffResult.current.confidence}%</span>
+                Category: {diffResult.current.category} &bull; Relative rank score:{" "}
+                <span className="font-mono font-medium">{diffResult.current.confidence} / 100</span>
               </div>
               <div className="pt-1 text-stone-700">
                 <span className="text-stone-500">Comparison: </span>
@@ -334,9 +336,9 @@ export default function HistoryPage() {
                     </h3>
                     <div className="text-stone-600 mt-0.5">
                       Category: <span className="text-stone-800 font-medium">{rec.category}</span>{" "}
-                      &bull; Confidence:{" "}
+                      &bull; Relative rank score:{" "}
                       <span className="font-mono font-medium text-[#1E4D3B] tabular-nums">
-                        {rec.confidence}%
+                        {rec.confidence} / 100
                       </span>
                     </div>
                   </div>

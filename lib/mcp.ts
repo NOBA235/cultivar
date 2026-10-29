@@ -20,7 +20,7 @@ export function createMcpServer(): McpServer {
   // Tool 1: resolve_product
   server.tool(
     "resolve_product",
-    "Resolves a raw catalog product name against Qloo's live entity taste database. Returns { result, qloo_request, qloo_response, explanation }.",
+    "Resolves a raw catalog product name against Qloo's entity search. The returned confidence is a local name-match heuristic, not a Qloo score. Returns { result, qloo_request, qloo_response, explanation }.",
     {
       product_name: z.string().describe("The name of the catalog product to resolve"),
       category: z.string().optional().describe("Optional product category"),
@@ -54,7 +54,7 @@ export function createMcpServer(): McpServer {
   // Tool 3: find_adjacent_products
   server.tool(
     "find_adjacent_products",
-    "Surfaces adjacent product candidates from a cultural taste signal using Qloo cross-domain affinities. Returns { result, qloo_request, qloo_response, explanation }.",
+    "Surfaces existing Qloo brand entities (cultural/brand inspirations, not new products) that share audience affinity with a cultural signal. Returns { result, qloo_request, qloo_response, explanation }.",
     {
       signal: z.string().describe("The signal entity ID or label"),
       take: z.number().optional().describe("Number of candidates to surface (default: 10)"),
@@ -70,7 +70,7 @@ export function createMcpServer(): McpServer {
   // Tool 4: rank_candidates
   server.tool(
     "rank_candidates",
-    "Ranks candidate products using affinity, signal diversity, and catalog novelty. Returns { result, qloo_request: null, qloo_response: null, explanation }.",
+    "Ranks candidate brand entities by totalAffinity x ln(signalCount + 1) x noveltyBonus; relative rank score is indexed to the top result (=100), not a probability. Returns { result, qloo_request: null, qloo_response: null, explanation }.",
     {
       candidates: z.array(z.any()).describe("List of candidate products with signals"),
       catalog: z.array(z.any()).describe("The user's current catalog items"),
@@ -101,7 +101,7 @@ export function createMcpServer(): McpServer {
   // Tool 6: remember_recommendation
   server.tool(
     "remember_recommendation",
-    "Stores a recommendation decision (accepted or rejected) into persistent memory. Returns { result, qloo_request: null, qloo_response: null, explanation }.",
+    "Stores a recommendation decision (accepted or rejected) in the local demo file data/memory.json (single-user, not durable cloud storage). Returns { result, qloo_request: null, qloo_response: null, explanation }.",
     {
       rec: z.any().describe("The recommendation object"),
       accepted: z.boolean().describe("Whether the user accepted the recommendation"),
@@ -118,7 +118,7 @@ export function createMcpServer(): McpServer {
   // Tool 7: recall_past_recommendations
   server.tool(
     "recall_past_recommendations",
-    "Retrieves past saved recommendations from persistent memory store. Returns { result, qloo_request: null, qloo_response: null, explanation }.",
+    "Retrieves past saved decisions from the local demo file data/memory.json. Returns { result, qloo_request: null, qloo_response: null, explanation }.",
     {},
     async () => {
       const response = await recall_past_recommendations();
@@ -131,7 +131,7 @@ export function createMcpServer(): McpServer {
   // Tool 8: seasonal_trends
   server.tool(
     "seasonal_trends",
-    "Retrieves live seasonal cultural trend signals for a given month or season from Qloo. Returns { result, qloo_request, qloo_response, explanation }.",
+    "Illustrative: resolves a season keyword (e.g. Harvest) to a Qloo brand entity and returns its brand affinities. Not time-series or market trend data. Returns { result, qloo_request, qloo_response, explanation }.",
     {
       month: z.union([z.number(), z.string()]).describe("Month (1-12) or season name ('autumn', 'spring')"),
       take: z.number().optional().describe("Number of trends to return (default: 10)"),

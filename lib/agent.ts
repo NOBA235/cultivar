@@ -50,8 +50,7 @@ const CATALOG_NAME_SIMILARITY = 0.8; // not in spec
 // Stage 4
 const NOVELTY_BONUS = 1.5;
 const TOP_RECOMMENDATIONS = 3;
-const TOP_SUPPORTING_SIGNALS = 8;
-const MIN_SUPPORTING_SIGNALS = 2; // Phase 2 acceptance: every rec has >= 2
+const MIN_SUPPORTING_SIGNALS = 2; // every recommendation has >= 2 real Qloo links
 
 // Max Qloo requests in flight at once (Phase 3: kept at 3 to avoid Qloo 429 rate limits).
 const QLOO_CONCURRENCY = 3;
@@ -356,6 +355,9 @@ export async function mapCulturalSignals(
               entityType: e.types?.[0] ?? domain,
               label: e.name,
               affinity,
+              // Provenance: the catalog product whose Qloo entity returned this signal.
+              sourceProduct: name,
+              sourceEntityId: entity.qlooId,
               qloo_request: auditRes.request,
               qloo_response: auditRes.response,
             });
@@ -399,6 +401,16 @@ export async function mapCulturalSignals(
 
 // ---------- Stage 3: adjacent products ----------
 
+/**
+ * Ordering key used to choose which signals are queried in stage 3. This is
+ * the raw Qloo catalog-to-signal affinity, optionally multiplied by the
+ * illustrative seasonal keyword weight. The weight only changes which signals
+ * are prioritised; it never overwrites the Qloo affinity that is displayed.
+ */
+function signalPriority(s: CulturalSignal): number {
+  return s.affinity * (s.seasonalMultiplier ?? 1);
+}
+
 export async function findAdjacentProducts(
   signals: Map<string, CulturalSignal[]>,
   abortSignal?: AbortSignal,
@@ -407,11 +419,14 @@ export async function findAdjacentProducts(
   const catalogNames = Array.from(signals.keys());
 
   // One query per distinct signal entity: the same signal reached from two
-  // products is a single piece of evidence, not two.
+  // products is a single piece of evidence, not two. Keep the strongest
+  // catalog-to-signal link so the displayed affinity and its source product
+  // refer to the same real Qloo response.
   const distinct = new Map<string, CulturalSignal>();
   for (const list of signals.values()) {
     for (const s of list) {
-      if (!distinct.has(s.entityId)) distinct.set(s.entityId, s);
+      const existing = distinct.get(s.entityId);
+      if (!existing || s.affinity > existing.affinity) distinct.set(s.entityId, s);
     }
   }
 
@@ -427,10 +442,10 @@ export async function findAdjacentProducts(
   const signalList: CulturalSignal[] = [];
   const SIGNALS_PER_DOMAIN = 4;
   for (const list of byDomain.values()) {
-    list.sort((a, b) => b.affinity - a.affinity);
+    list.sort((a, b) => signalPriority(b) - signalPriority(a));
     signalList.push(...list.slice(0, SIGNALS_PER_DOMAIN));
   }
-  signalList.sort((a, b) => b.affinity - a.affinity);
+  signalList.sort((a, b) => signalPriority(b) - signalPriority(a));
   const byId = new Map<string, Candidate>();
 
   const results = await mapLimit(
@@ -518,16 +533,21 @@ function tokens(text: string): string[] {
 
 /**
  * Score = totalAffinity x ln(signalCount + 1) x noveltyBonus.
+ * totalAffinity is the sum of the Qloo signal-to-candidate affinities
+ * (`candidateAffinity`) for the signals that actually returned the candidate.
  * noveltyBonus is 1.5 when no word of the candidate's category appears in any
  * catalog product's category. Candidates with fewer than 2 distinct signals
  * are dropped so every recommendation carries at least 2 pieces of evidence.
- * `confidence` is the score relative to the top score (top = 100), so it is
- * a relative rank signal, not an absolute probability.
+ * `confidence` (kept as the field name for compatibility) is the relative rank
+ * score: the raw score indexed to the top score (top = 100). It is not a
+ * probability and says nothing about commercial success.
+ *
+ * Supporting signals are ONLY the signals that surfaced the candidate in
+ * stage 3. No signal is added without a real Qloo signal-to-candidate affinity.
  */
 export function rankAndFilter(
   candidates: Candidate[],
   userCatalog: Product[],
-  catalogSignals?: Map<string, CulturalSignal[]>,
 ): Recommendation[] {
   const catalogTokens = new Set(userCatalog.flatMap((p) => tokens(p.category)));
 
@@ -542,55 +562,24 @@ export function rankAndFilter(
         noveltyBonus;
       return { c, score, isNew, noveltyBonus };
     })
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || a.c.entityId.localeCompare(b.c.entityId))
     .slice(0, TOP_RECOMMENDATIONS);
 
   if (scored.length === 0) return [];
   const top = scored[0].score;
 
-  return scored.map(({ c, score, isNew, noveltyBonus }, recIdx) => {
+  return scored.map(({ c, score, isNew, noveltyBonus }) => {
     const confidence = top > 0 ? Math.round((score / top) * 100) : 0;
     const totalAffinityFormatted = Number(c.totalAffinity.toFixed(4));
     const rawScoreFormatted = Number(score.toFixed(4));
     const topScoreFormatted = Number(top.toFixed(4));
-    const calculationText = `${totalAffinityFormatted} × ln(${c.signals.length} + 1) × ${noveltyBonus.toFixed(1)} = ${rawScoreFormatted} (relative to top score ${topScoreFormatted}: ${confidence}%)`;
+    const calculationText = `${totalAffinityFormatted} × ln(${c.signals.length} + 1) × ${noveltyBonus.toFixed(1)} = ${rawScoreFormatted}; relative rank score = round(${rawScoreFormatted} / ${topScoreFormatted} × 100) = ${confidence}/100`;
 
-    // Direct seed signals that surfaced this candidate
-    const candidateSignals = [...c.signals];
-    const seenEntityIds = new Set(candidateSignals.map((s) => s.entityId));
-
-    // Enrich with distinct cultural signals from the catalog taste graph across domains
-    if (catalogSignals) {
-      const allCatalogSignals = Array.from(catalogSignals.values()).flat();
-      const domainMap = new Map<string, CulturalSignal[]>();
-      for (const sig of allCatalogSignals) {
-        const dom = sig.entityType;
-        const list = domainMap.get(dom) ?? [];
-        list.push(sig);
-        domainMap.set(dom, list);
-      }
-
-      // Cycle through domain groups with offset based on recommendation index
-      for (const [, list] of domainMap.entries()) {
-        list.sort((a, b) => b.affinity - a.affinity);
-        const offset = (recIdx * 2) % Math.max(1, list.length);
-        const candidatesFromDomain = [...list.slice(offset), ...list.slice(0, offset)];
-        for (const sig of candidatesFromDomain) {
-          if (!seenEntityIds.has(sig.entityId) && candidateSignals.length < TOP_SUPPORTING_SIGNALS) {
-            seenEntityIds.add(sig.entityId);
-            candidateSignals.push({
-              ...sig,
-              candidateAffinity: Number((sig.affinity * 0.95).toFixed(4)),
-            });
-            break;
-          }
-        }
-      }
-    }
-
-    const supportingSignals = candidateSignals
-      .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
-      .slice(0, TOP_SUPPORTING_SIGNALS);
+    // All contributing signals are kept (not truncated) so the displayed
+    // signal-to-candidate affinities sum exactly to totalAffinity.
+    const supportingSignals = [...c.signals].sort(
+      (a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0),
+    );
 
     return {
       name: c.name,
@@ -713,7 +702,8 @@ async function runStages2to4(
   let signals = await mapCulturalSignals(resolved, signal);
   console.timeEnd(`agent:${id}:stage2:signals`);
 
-  // Phase 9: Apply seasonal multipliers if target launch month is specified
+  // Optional illustrative seasonal keyword weighting for a target launch month.
+  // Displayed Qloo affinities stay raw; only stage-3 signal priority changes.
   if (typeof month === "number") {
     const seasonallyAdjusted = new Map<string, CulturalSignal[]>();
     for (const [key, sigList] of signals.entries()) {
@@ -750,7 +740,7 @@ async function runStages2to4(
 
   if (trace) trace.stage = "rank";
   console.time(`agent:${id}:stage4:rank`);
-  const recommendations = rankAndFilter(candidates, catalog, signals);
+  const recommendations = rankAndFilter(candidates, catalog);
   console.timeEnd(`agent:${id}:stage4:rank`);
   if (recommendations.length === 0) {
     throw new AgentEmptyStageError(

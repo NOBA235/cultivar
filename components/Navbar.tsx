@@ -29,9 +29,8 @@ export function Navbar() {
               <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-[0.14em] text-stone-500">Product intelligence</span>
             </span>
           </Link>
-          <span className="flex items-center gap-2 rounded-full border border-[#e8eee8] bg-[#f7faf7] px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:hidden">
-            <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-30" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" /></span>
-            Qloo connected
+          <span className="flex items-center gap-1.5 rounded-full border border-[#e8eee8] bg-[#f7faf7] px-2.5 py-1 text-[10px] font-medium text-stone-600 sm:hidden">
+            <span>Coffee Roaster Demo</span>
           </span>
         </div>
 
@@ -56,8 +55,8 @@ export function Navbar() {
             })}
           </nav>
           <div className="hidden items-center gap-2 border-l border-stone-200 pl-4 text-[11px] text-stone-500 md:flex">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#edf4ee] text-[10px] font-semibold text-[#23573d]">CQ</span>
-            <span className="whitespace-nowrap">Taste Graph <span className="ml-1 text-emerald-700">●</span></span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#edf4ee] text-[10px] font-semibold text-[#23573d]">CR</span>
+            <span className="whitespace-nowrap">Coffee Roaster Demo</span>
           </div>
         </div>
       </div>

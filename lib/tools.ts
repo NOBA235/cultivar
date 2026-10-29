@@ -4,6 +4,7 @@ import {
   QlooHttpError,
 } from "./qloo";
 import { generateJson } from "./gemini";
+import { rankAndFilter } from "./agent";
 import {
   buildExplainPrompt,
   EXPLAIN_INSTRUCTION,
@@ -208,7 +209,7 @@ export async function resolve_product(
     result: resolved,
     qloo_request: bestMatch.request,
     qloo_response: bestMatch.response,
-    explanation: `Resolved "${product_name}" to "${resolved.label}" (ID: ${resolved.qlooId}) with confidence ${resolved.confidence.toFixed(2)}.`,
+    explanation: `Resolved "${product_name}" to "${resolved.label}" (ID: ${resolved.qlooId}). Name match score ${resolved.confidence.toFixed(2)} is a local string-similarity heuristic, not a Qloo score.`,
   };
 }
 
@@ -276,25 +277,31 @@ export async function find_adjacent_products(
   let catalogNames: string[] = [];
   let abortSignal: AbortSignal | undefined;
 
+  // When only an entity ID is supplied there is no catalog-to-signal link, so
+  // the catalog affinity is unknown. It is recorded as 0 (never guessed) and
+  // flagged in the explanation; the candidate affinities below are real Qloo values.
+  let catalogAffinityKnown = true;
   if (typeof input === "string") {
+    catalogAffinityKnown = false;
     signalEntityId = input;
     signalObj = {
       entityId: input,
-      entityType: "urn:entity:brand",
+      entityType: "unknown",
       label: input,
-      affinity: 0.8,
+      affinity: 0,
     };
   } else if ("entityId" in input) {
     signalEntityId = input.entityId;
     signalObj = input;
   } else {
+    if (typeof input.signal === "string") catalogAffinityKnown = false;
     signalObj =
       typeof input.signal === "string"
         ? {
             entityId: input.signal,
-            entityType: "urn:entity:brand",
+            entityType: "unknown",
             label: input.signal,
-            affinity: 0.8,
+            affinity: 0,
           }
         : input.signal;
     signalEntityId = signalObj.entityId;
@@ -328,7 +335,11 @@ export async function find_adjacent_products(
     result: candidates,
     qloo_request: audit.request,
     qloo_response: audit.response,
-    explanation: `Found ${candidates.length} adjacent product candidates from cultural signal "${signalObj.label}" (${signalEntityId}).`,
+    explanation:
+      `Found ${candidates.length} Qloo brand entities with audience affinity to signal "${signalObj.label}" (${signalEntityId}). These are existing brands (cultural/brand inspirations), not new product ideas.` +
+      (catalogAffinityKnown
+        ? ""
+        : " Catalog-to-signal affinity is unknown because the signal was supplied by ID only (recorded as 0, not estimated)."),
   };
 }
 
@@ -344,64 +355,15 @@ export async function rank_candidates(
 ): Promise<ToolResponse<Recommendation[]>> {
   const { candidates, catalog } = input;
   const userCatalog: Product[] = catalog.map((c) => ("product" in c ? c.product : c));
-  const catalogTokens = new Set(
-    userCatalog.flatMap((p) => normalize(p.category).split(" ").filter(Boolean)),
-  );
-
-  const scored = candidates
-    .filter((c) => c.signals.length >= 2)
-    .map((c) => {
-      const isNew = !normalize(c.category)
-        .split(" ")
-        .filter(Boolean)
-        .some((t) => catalogTokens.has(t));
-      const noveltyBonus = isNew ? 1.5 : 1.0;
-      const score =
-        c.totalAffinity * Math.log(c.signals.length + 1) * noveltyBonus;
-      return { c, score, isNew, noveltyBonus };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-
-  const top = scored[0]?.score ?? 1;
-
-  const recommendations: Recommendation[] = scored.map(({ c, score, isNew, noveltyBonus }) => {
-    const confidence = top > 0 ? Math.round((score / top) * 100) : 0;
-    const totalAffinityFormatted = Number(c.totalAffinity.toFixed(4));
-    const rawScoreFormatted = Number(score.toFixed(4));
-    const topScoreFormatted = Number(top.toFixed(4));
-    const calculationText = `${totalAffinityFormatted} × ln(${c.signals.length} + 1) × ${noveltyBonus.toFixed(1)} = ${rawScoreFormatted} (relative to top score ${topScoreFormatted}: ${confidence}%)`;
-
-    return {
-      name: c.name,
-      entityId: c.entityId,
-      category: c.category,
-      confidence,
-      supportingSignals: [...c.signals]
-        .sort((a, b) => (b.candidateAffinity ?? 0) - (a.candidateAffinity ?? 0))
-        .slice(0, 5),
-      qloo_request: c.rawAudit?.qloo_request ?? null,
-      qloo_response: c.rawAudit?.qloo_response ?? null,
-      toolTraces: c.toolTraces ?? [],
-      ranking: {
-        formula: "totalAffinity × ln(signalCount + 1) × noveltyBonus",
-        totalAffinity: totalAffinityFormatted,
-        signalCount: c.signals.length,
-        isNewCategory: isNew,
-        noveltyBonus,
-        rawScore: rawScoreFormatted,
-        topScore: topScoreFormatted,
-        confidence,
-        calculationText,
-      },
-    };
-  });
+  // Same deterministic scoring as the web pipeline (lib/agent.ts) so the MCP
+  // tool and the UI can never disagree.
+  const recommendations = rankAndFilter(candidates, userCatalog);
 
   return {
     result: recommendations,
     qloo_request: null,
     qloo_response: null,
-    explanation: `Ranked ${candidates.length} candidates against ${userCatalog.length} catalog items into ${recommendations.length} final recommendations.`,
+    explanation: `Ranked ${candidates.length} candidates against ${userCatalog.length} catalog items into ${recommendations.length} brand inspirations using totalAffinity × ln(signalCount + 1) × noveltyBonus. The relative rank score indexes each result to the top result (=100); it is not a probability.`,
   };
 }
 
@@ -545,7 +507,7 @@ export async function seasonal_trends(
     result: signals,
     qloo_request: insightsAudit.request,
     qloo_response: insightsAudit.response,
-    explanation: `Retrieved ${signals.length} live seasonal trend signals for ${anchorConfig.season} (${anchorConfig.query}) from Qloo.`,
+    explanation: `Illustrative only: resolved the keyword "${anchorConfig.query}" (${anchorConfig.season}) to the Qloo brand entity "${anchorEntity.name}" and returned ${signals.length} brands with audience affinity to it. This is a keyword anchor, not Qloo time-series or market trend data.`,
   };
 }
 
@@ -574,7 +536,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "find_adjacent_products",
-    description: "Surfaces adjacent product candidates from a cultural signal using Qloo cross-domain affinities.",
+    description: "Surfaces existing Qloo brand entities (cultural/brand inspirations) that share audience affinity with a cultural signal.",
     parameters: z.object({
       signal: z.string().describe("The signal entity ID or signal object"),
       take: z.number().optional().describe("Number of candidates to surface"),
@@ -583,7 +545,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "rank_candidates",
-    description: "Ranks candidate products using affinity, signal diversity, and catalog novelty.",
+    description: "Ranks candidate brand entities by totalAffinity × ln(signalCount + 1) × noveltyBonus and returns a relative rank score (top = 100, not a probability).",
     parameters: z.object({
       candidates: z.array(z.any()).describe("List of candidate products with signals"),
       catalog: z.array(z.any()).describe("The user's current catalog items"),
@@ -600,7 +562,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "remember_recommendation",
-    description: "Stores a recommendation decision (accepted or rejected) into persistent memory.",
+    description: "Stores a recommendation decision (accepted or rejected) in the local demo file data/memory.json (single-user, not durable cloud storage).",
     parameters: z.object({
       rec: z.any().describe("The recommendation object"),
       accepted: z.boolean().describe("Whether the user accepted the recommendation"),
@@ -610,13 +572,13 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "recall_past_recommendations",
-    description: "Retrieves past saved recommendations from persistent memory store.",
+    description: "Retrieves past saved decisions from the local demo file data/memory.json.",
     parameters: z.object({}),
     handler: recall_past_recommendations,
   },
   {
     name: "seasonal_trends",
-    description: "Retrieves live seasonal cultural trend signals for a given month or season from Qloo.",
+    description: "Illustrative: resolves a season keyword (e.g. 'Harvest') to a Qloo brand entity and returns its brand affinities. Not time-series or market trend data.",
     parameters: z.object({
       month: z.union([z.number(), z.string()]).describe("Month (1-12) or season name ('autumn', 'spring')"),
       take: z.number().optional().describe("Number of trends to return"),

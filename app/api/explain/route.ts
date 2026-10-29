@@ -23,7 +23,7 @@ const ExplanationSchema = z.object({ explanation: z.string().trim().min(1) });
 async function explainOne(
   rec: Recommendation,
   pastRecords: StoredRecommendation[] = [],
-): Promise<Recommendation> {
+): Promise<{ rec: Recommendation; fallbackReason?: string }> {
   try {
     const { explanation } = await generateJson({
       label: `explain "${rec.name}"`,
@@ -37,18 +37,17 @@ async function explainOne(
     if (words > EXPLAIN_MAX_WORDS) {
       console.warn(`[api:explain] "${rec.name}" explanation is ${words} words (limit ${EXPLAIN_MAX_WORDS})`);
     }
-    return { ...rec, explanation };
+    return { rec: { ...rec, explanation, explanationFallback: false } };
   } catch (err) {
-    console.warn(`[api:explain] Gemini explain call failed for "${rec.name}", using grounded fallback:`, err);
-    // Grounded fallback citing signals and past memory if present
+    console.warn(`[api:explain] Gemini explain call failed for "${rec.name}", using template fallback:`, err);
+    // Template fallback built only from the Qloo signal labels. It is flagged
+    // so the UI can label it as a template rather than a Gemini explanation.
     const topSignals = rec.supportingSignals.slice(0, 3).map((s) => s.label).join(", ");
-    let memoryRef = "";
-    if (pastRecords.length > 0) {
-      const last = pastRecords[pastRecords.length - 1];
-      memoryRef = ` Built on past evaluation of "${last.recommendation.name}" (${last.accepted ? "accepted" : "declined"}).`;
-    }
-    const fallback = `Follows cultural affinity with ${topSignals}.${memoryRef}`;
-    return { ...rec, explanation: fallback };
+    const fallback = `Template text (Gemini unavailable): Qloo links this brand to the catalog through shared audience affinity with ${topSignals}.`;
+    return {
+      rec: { ...rec, explanation: fallback, explanationFallback: true },
+      fallbackReason: errorMessage(err),
+    };
   }
 }
 
@@ -64,10 +63,16 @@ export async function POST(request: Request): Promise<Response> {
 
     try {
       const pastRecords = await getAllStoredRecords();
-      const recommendations = await Promise.all(
+      const results = await Promise.all(
         parsed.data.recommendations.map((r) => explainOne(r, pastRecords)),
       );
-      return Response.json({ recommendations });
+      const recommendations = results.map((r) => r.rec);
+      const fallbackReason = results.find((r) => r.fallbackReason)?.fallbackReason;
+      return Response.json({
+        recommendations,
+        isFallback: Boolean(fallbackReason),
+        fallbackReason,
+      });
     } catch (err) {
       console.error("[api:explain] Pipeline failure:", err);
       return jsonError(502, "GEMINI_EXPLAIN_FAILED", "Gemini explain failed", errorMessage(err));

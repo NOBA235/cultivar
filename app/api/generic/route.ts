@@ -6,7 +6,7 @@ import {
   GENERIC_INSTRUCTION,
   GENERIC_RESPONSE_SCHEMA,
 } from "@/lib/prompts";
-import { parseCatalogCsv } from "@/lib/schemas";
+import { MAX_CATALOG_PRODUCTS, parseCatalogCsv } from "@/lib/schemas";
 
 // POST multipart/form-data (CSV) OR application/json ({ products: [{ name, category }] }).
 // The deliberately Qloo-free baseline for /compare: Gemini sees only product
@@ -28,7 +28,7 @@ const GenericSchema = z.object({
 
 export type GenericSuggestion = z.infer<typeof GenericSchema>["suggestions"][number];
 
-/** Plausible fallback consultant suggestions if Gemini API quota is depleted */
+/** Static placeholder ideas used only when Gemini is unavailable. Always returned with isFallback: true. */
 function getPlausibleGenericFallback(products: Array<{ name: string; category: string }>): GenericSuggestion[] {
   const p1 = products[0]?.name || "Single-Origin Specialty";
   const p2 = products[1]?.name || "Craft Cold Brew";
@@ -36,17 +36,17 @@ function getPlausibleGenericFallback(products: Array<{ name: string; category: s
     {
       name: `${p1.split(" ")[0]} Ready-to-Drink Nitro Cold Brew`,
       category: "Ready-to-Drink Beverage",
-      reasoning: `Extends the existing coffee catalog into the high-growth shelf-stable RTD convenience market, leveraging consumer familiarity with ${p1}.`,
+      reasoning: `Placeholder idea: extends the existing coffee catalog into a ready-to-drink format, building on ${p1}.`,
     },
     {
       name: "Cascara Sparkling Botanical Tonic",
       category: "Functional Beverage",
-      reasoning: `Upcycles coffee cherry byproduct into an effervescent low-sugar refreshment, pairing well alongside artisan dark chocolate and ${p2}.`,
+      reasoning: `Placeholder idea: uses coffee cherry byproduct for a sparkling drink to sit alongside ${p2}.`,
     },
     {
       name: "Infused Dark Chocolate Mocha Spread",
       category: "Pantry & Spreads",
-      reasoning: `Combines dark cacao and espresso bean flavor profiles to capture morning breakfast and dessert gifting occasions without substantial equipment investment.`,
+      reasoning: `Placeholder idea: combines cacao and espresso flavors in a pantry product.`,
     },
   ];
 }
@@ -82,7 +82,7 @@ export async function POST(request: Request): Promise<Response> {
       const upload = await readCsvUpload(request);
       if (!upload.ok) return upload.response;
 
-      const parsed = parseCatalogCsv(upload.text);
+      const parsed = parseCatalogCsv(upload.text, { minRows: 1, maxRows: MAX_CATALOG_PRODUCTS });
       if (!parsed.ok) {
         return jsonError(400, "INVALID_CSV", "The CSV failed validation.", parsed.issues);
       }
@@ -91,6 +91,13 @@ export async function POST(request: Request): Promise<Response> {
 
     if (products.length === 0) {
       return jsonError(400, "EMPTY_CATALOG", "At least one product with name and category is required.");
+    }
+    if (products.length > MAX_CATALOG_PRODUCTS) {
+      return jsonError(
+        400,
+        "TOO_MANY_PRODUCTS",
+        `At most ${MAX_CATALOG_PRODUCTS} products are supported per run (received ${products.length}).`,
+      );
     }
 
     try {
@@ -101,12 +108,17 @@ export async function POST(request: Request): Promise<Response> {
         jsonSchema: GENERIC_RESPONSE_SCHEMA,
         schema: GenericSchema,
       });
-      return Response.json({ suggestions });
+      return Response.json({ suggestions, isFallback: false });
     } catch (err) {
-      console.warn("[api:generic] Gemini generic call failed (using plausible consultant fallback):", err);
-      // Return plausible generic food consultant suggestions
+      console.warn("[api:generic] Gemini generic call failed (returning static fallback, flagged):", err);
+      // Static placeholder ideas, explicitly flagged so the UI never presents
+      // them as Gemini output.
       const fallbackSuggestions = getPlausibleGenericFallback(products);
-      return Response.json({ suggestions: fallbackSuggestions });
+      return Response.json({
+        suggestions: fallbackSuggestions,
+        isFallback: true,
+        fallbackReason: errorMessage(err),
+      });
     }
   });
 }

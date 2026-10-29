@@ -12,6 +12,8 @@ export default function ComparePage() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [genericSuggestions, setGenericSuggestions] = useState<GenericSuggestion[]>([]);
   const [isLoadingGeneric, setIsLoadingGeneric] = useState(true);
+  const [isGenericFallback, setIsGenericFallback] = useState(false);
+  const [genericFallbackReason, setGenericFallbackReason] = useState<string | null>(null);
   const [genericError, setGenericError] = useState<string | null>(null);
 
   const [expandedIds, setExpandedIds] = useState<Record<number, boolean>>({});
@@ -74,6 +76,8 @@ export default function ComparePage() {
   const fetchGenericBaseline = async (products: Array<{ name: string; category: string }>) => {
     setIsLoadingGeneric(true);
     setGenericError(null);
+    setIsGenericFallback(false);
+    setGenericFallbackReason(null);
     try {
       const res = await fetch("/api/generic", {
         method: "POST",
@@ -89,6 +93,10 @@ export default function ComparePage() {
       const data = await res.json();
       if (Array.isArray(data.suggestions) && data.suggestions.length >= 3) {
         setGenericSuggestions(data.suggestions.slice(0, 3));
+        if (data.isFallback) {
+          setIsGenericFallback(true);
+          setGenericFallbackReason(data.fallbackReason || "Gemini unavailable");
+        }
       } else {
         throw new Error("Invalid suggestions payload received");
       }
@@ -156,13 +164,13 @@ export default function ComparePage() {
                 Recommendations
               </button>
               <span aria-hidden="true">/</span>
-              <span>Baseline comparison</span>
+              <span>Workflow comparison</span>
             </div>
             <h1 className="text-2xl font-semibold tracking-[-0.04em] text-[#17211b] sm:text-3xl">
-              Baseline comparison
+              Illustrative workflow comparison
             </h1>
-            <p className="text-sm text-stone-600">
-              Comparing ungrounded LLM suggestions with Qloo-grounded recommendations using the same model (<code className="font-mono text-xs text-stone-800">gemini-2.5-flash</code>).
+            <p className="max-w-3xl text-sm text-stone-600">
+              An illustrative look at two different ways to approach product ideation: ungrounded LLM brainstorming (Gemini generating concepts from catalog names alone) vs. Qloo-grounded cultural discovery (Qloo taste graph discovering adjacent brand entities, with Gemini synthesizing a cultural narrative).
             </p>
           </div>
 
@@ -173,33 +181,55 @@ export default function ComparePage() {
           </div>
         </div>
 
+        {/* Fallback Banner if Generic Gemini call used static ideas */}
+        {isGenericFallback && (
+          <div
+            role="status"
+            className="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5"
+          >
+            <span className="font-semibold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950 uppercase tracking-wide text-[10px]">
+              Fallback Active
+            </span>
+            <span>
+              The generic baseline Gemini call was unavailable ({genericFallbackReason || "quota/rate limit"}). The left column is showing static placeholder concepts rather than live Gemini output.
+            </span>
+          </div>
+        )}
+
         {/* Column Headers (Desktop Sticky / Aligned) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#e5ebe4] bg-white p-4 shadow-[0_5px_20px_rgba(27,53,35,.025)]">
             <div>
-              <h2 className="text-sm font-semibold text-stone-800">
-                Generic LLM (gemini-2.5-flash, no cultural grounding)
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-stone-800">
+                  Workflow A: Direct LLM ideation
+                </h2>
+                {isGenericFallback && (
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 border border-stone-200">
+                    Static fallback
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-stone-500 mt-0.5">
-                Catalog names &amp; categories only
+                Gemini prompts with catalog names &amp; categories only (no cultural data)
               </p>
             </div>
             <span className="text-xs px-2 py-0.5 rounded bg-white text-stone-600 border border-stone-200 shrink-0 font-medium">
-              Baseline
+              Concept ideas
             </span>
           </div>
 
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#cfe2d4] bg-[#f2f8f2] p-4 shadow-[0_5px_20px_rgba(27,53,35,.025)]">
             <div>
               <h2 className="text-sm font-semibold text-[#1E4D3B]">
-                Cultivar (gemini-2.5-flash + Qloo taste graph)
+                Workflow B: Qloo cultural discovery
               </h2>
               <p className="text-xs text-stone-600 mt-0.5">
-                Cross-domain audience affinities
+                Qloo taste graph ranks brand inspirations + Gemini narrates the link
               </p>
             </div>
             <span className="text-xs px-2 py-0.5 rounded bg-white text-[#1E4D3B] border border-[#C5DFD0] shrink-0 font-medium">
-              Grounded
+              Brand inspirations
             </span>
           </div>
         </div>
@@ -275,8 +305,11 @@ export default function ComparePage() {
                               {rec.category}
                             </span>
                           </div>
-                          <span className="font-mono font-medium text-stone-700 tabular-nums">
-                            Confidence: {rec.confidence}%
+                          <span
+                            className="font-mono font-medium text-stone-700 tabular-nums"
+                            title="Relative rank score indexed to top result (=100). Not a probability."
+                          >
+                            Relative score: {rec.confidence} / 100
                           </span>
                         </div>
                         <h3 className="text-base font-semibold text-stone-900">
@@ -417,8 +450,7 @@ export default function ComparePage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-stone-600">
             <div className="flex items-center gap-2">
               <span>
-                Both columns use <strong className="text-stone-900">gemini-2.5-flash</strong> at temperature{" "}
-                <strong className="text-stone-900">0.2</strong>. The only difference is cultural grounding via Qloo.
+                <strong>Methodology distinction:</strong> The left column prompts Gemini to invent new product concepts from catalog names alone. The right column uses Qloo&apos;s taste graph to retrieve and rank existing brand entities via audience affinities, using Gemini only to synthesize the cultural explanation.
               </span>
 
               <Tooltip.Root>
@@ -437,7 +469,7 @@ export default function ComparePage() {
                     align="center"
                     className="max-w-xs z-50 px-3 py-2 text-xs text-stone-100 bg-stone-900 rounded-lg shadow-lg"
                   >
-                    We ran the same model on both sides. The left is a fair baseline. We did not use a weaker model to make Qloo look better.
+                    Illustrative comparison of two distinct product workflows: pure ungrounded LLM ideation vs. Qloo audience taste graph discovery with LLM narrative synthesis.
                     <Tooltip.Arrow className="fill-stone-900" />
                   </Tooltip.Content>
                 </Tooltip.Portal>

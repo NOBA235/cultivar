@@ -61,6 +61,8 @@ export async function readJson(
   }
 }
 
+export const MAX_CSV_UPLOAD_BYTES = 1_048_576; // 1 MB
+
 /** Reads the uploaded CSV from multipart/form-data field "file". */
 export async function readCsvUpload(
   request: Request,
@@ -83,6 +85,22 @@ export async function readCsvUpload(
     return {
       ok: false,
       response: jsonError(400, "MISSING_FILE", 'No file found in form field "file".'),
+    };
+  }
+  if (file.size === 0) {
+    return {
+      ok: false,
+      response: jsonError(400, "EMPTY_FILE", "Uploaded CSV file is empty."),
+    };
+  }
+  if (file.size > MAX_CSV_UPLOAD_BYTES) {
+    return {
+      ok: false,
+      response: jsonError(
+        413,
+        "FILE_TOO_LARGE",
+        `CSV file exceeds the 1 MB limit (${file.size.toLocaleString()} bytes uploaded).`,
+      ),
     };
   }
   const typeVal = form.get("type");

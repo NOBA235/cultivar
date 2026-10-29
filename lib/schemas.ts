@@ -14,6 +14,8 @@ import type {
 // ---------- Catalog CSV ----------
 
 export const CATALOG_COLUMNS = ["product_name", "category", "description"] as const;
+export const MIN_CATALOG_PRODUCTS = 2;
+export const MAX_CATALOG_PRODUCTS = 50;
 
 const CatalogRowSchema = z.object({
   product_name: z.string().trim().min(1, "product_name is empty"),
@@ -31,8 +33,19 @@ export type CatalogParseResult =
   | { ok: true; products: Product[] }
   | { ok: false; issues: Issue[] };
 
+export interface CatalogParseOptions {
+  minRows?: number;
+  maxRows?: number;
+}
+
 /** Parses and validates a catalog CSV. Never throws on bad input. */
-export function parseCatalogCsv(text: string): CatalogParseResult {
+export function parseCatalogCsv(
+  text: string,
+  options?: CatalogParseOptions,
+): CatalogParseResult {
+  const minRows = options?.minRows ?? MIN_CATALOG_PRODUCTS;
+  const maxRows = options?.maxRows ?? MAX_CATALOG_PRODUCTS;
+
   const parsed = Papa.parse<Record<string, unknown>>(text, {
     header: true,
     skipEmptyLines: "greedy",
@@ -55,6 +68,20 @@ export function parseCatalogCsv(text: string): CatalogParseResult {
 
   if (parsed.data.length === 0) {
     issues.push({ message: "CSV has a header but no product rows." });
+    return { ok: false, issues };
+  }
+
+  if (parsed.data.length < minRows) {
+    issues.push({
+      message: `Catalog must include at least ${minRows} product rows (found ${parsed.data.length}).`,
+    });
+    return { ok: false, issues };
+  }
+
+  if (parsed.data.length > maxRows) {
+    issues.push({
+      message: `Catalog exceeds the maximum of ${maxRows} product rows per run (found ${parsed.data.length}).`,
+    });
     return { ok: false, issues };
   }
 
@@ -128,6 +155,9 @@ export const CulturalSignalSchema: z.ZodType<CulturalSignal> = z.object({
   entityType: z.string().min(1),
   label: z.string().min(1),
   affinity: z.number(),
+  seasonalMultiplier: z.number().optional(),
+  sourceProduct: z.string().optional(),
+  sourceEntityId: z.string().optional(),
   candidateAffinity: z.number().optional(),
   qloo_request: QlooRequestAuditSchema.nullable().optional(),
   qloo_response: z.unknown().nullable().optional(),
@@ -140,6 +170,7 @@ export const RecommendationSchema: z.ZodType<Recommendation> = z.object({
   confidence: z.number(),
   supportingSignals: z.array(CulturalSignalSchema).min(1),
   explanation: z.string().optional(),
+  explanationFallback: z.boolean().optional(),
   qloo_request: QlooRequestAuditSchema.nullable().optional(),
   qloo_response: z.unknown().nullable().optional(),
   toolTraces: z.array(ToolTraceSchema).optional(),
@@ -147,7 +178,10 @@ export const RecommendationSchema: z.ZodType<Recommendation> = z.object({
 });
 
 export const RecommendRequestSchema = z.object({
-  resolved: z.array(ResolvedEntitySchema).min(1, "resolved must not be empty"),
+  resolved: z
+    .array(ResolvedEntitySchema)
+    .min(MIN_CATALOG_PRODUCTS, `At least ${MIN_CATALOG_PRODUCTS} resolved products are required`)
+    .max(MAX_CATALOG_PRODUCTS, `At most ${MAX_CATALOG_PRODUCTS} resolved products are supported`),
   month: z.number().min(1).max(12).optional(),
 });
 

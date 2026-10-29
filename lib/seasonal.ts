@@ -2,14 +2,16 @@ import type { CulturalSignal } from "./types";
 
 /**
  * ==============================================================================
- * DEMO DATA NOTICE:
- * Calibrated from public retail trend reports and cultural seasonality indices,
- * not live Qloo historical time-series data.
+ * ILLUSTRATIVE KEYWORD WEIGHTING — NOT TREND DATA
+ * The quarters, keywords, and multipliers below are hand-written assumptions
+ * for the demo. They are not derived from Qloo time-series data, sales data, or
+ * any market research. They only change which Qloo signals are prioritised for
+ * candidate lookup; they never change the Qloo affinity values that are shown.
  * ==============================================================================
  */
 
 export const SEASONAL_DATA_DISCLAIMER =
-  "Illustrative demo data, calibrated from public trend reports and consumer index shifts, not live Qloo time-series.";
+  "Illustrative keyword weighting written for this demo. Not live market trends and not Qloo time-series data.";
 
 export type Season = "Q1_Winter" | "Q2_Spring" | "Q3_Summer" | "Q4_Autumn";
 
@@ -40,34 +42,34 @@ export const QUARTER_DEFINITIONS: Record<Season, SeasonInfo> = {
   Q1_Winter: {
     quarter: "Q1_Winter",
     seasonName: "Winter",
-    focusTitle: "Winter Reflection & Rich Warming Flavors",
+    focusTitle: "Winter: warming, indoor themes",
     focusDescription:
-      "Consumer cultural index shifts toward introspective literature, warm dark roasts, and contemplative media.",
-    boostedKeywords: ["book", "espresso", "dark", "chocolate", "acoustic", "zombies", "provincetown"],
+      "Assumption: signals mentioning warming or indoor themes (books, dark roasts, chocolate) are prioritised.",
+    boostedKeywords: ["book", "espresso", "dark", "chocolate", "winter", "acoustic"],
   },
   Q2_Spring: {
     quarter: "Q2_Spring",
     seasonName: "Spring",
-    focusTitle: "Spring Awakening & Floral Botanicals",
+    focusTitle: "Spring: floral and botanical themes",
     focusDescription:
-      "Affinities spike for floral infusions, effervescent teas, outdoor indie music, and garden travel destinations.",
-    boostedKeywords: ["bloom", "botanical", "tea", "chamomile", "mint", "スキマスイッチ", "destination"],
+      "Assumption: signals mentioning floral, botanical, or tea themes are prioritised.",
+    boostedKeywords: ["bloom", "botanical", "tea", "chamomile", "mint", "garden", "spring"],
   },
   Q3_Summer: {
     quarter: "Q3_Summer",
     seasonName: "Summer",
-    focusTitle: "High Summer Refreshment & RTD Cold Brew",
+    focusTitle: "Summer: cold and outdoor themes",
     focusDescription:
-      "Audience engagement peaks for ready-to-drink cans, activewear brands, beach destinations, and summer festival artists.",
-    boostedKeywords: ["cold brew", "latte", "can", "gloucester", "calbee", "いきものがかり", "active"],
+      "Assumption: signals mentioning cold drinks, cans, or outdoor activity are prioritised.",
+    boostedKeywords: ["cold brew", "iced", "can", "beach", "summer", "active", "festival"],
   },
   Q4_Autumn: {
     quarter: "Q4_Autumn",
     seasonName: "Autumn",
-    focusTitle: "Autumn Harvest & Barrel-Aged Cascara",
+    focusTitle: "Autumn: harvest and spice themes",
     focusDescription:
-      "Cultural taste graphs heavily over-index on upcycled cascara, single-estate cacao, investigative media, and autumn cinema.",
-    boostedKeywords: ["harvest", "cascara", "journal", "economist", "reuters", "minimalism", "ポルノグラフィティ"],
+      "Assumption: signals mentioning harvest, spice, or cascara themes are prioritised.",
+    boostedKeywords: ["harvest", "cascara", "spice", "pumpkin", "autumn", "fall"],
   },
 };
 
@@ -80,7 +82,7 @@ export function getSeasonForMonth(month: number): SeasonInfo {
 }
 
 /**
- * Calculates a seasonal multiplier between 0.85 and 1.25 for a cultural signal
+ * Illustrative keyword weight between 1.0 and 1.25 for a cultural signal
  * based on the target launch month.
  */
 export function getSeasonalMultiplier(signal: CulturalSignal, month: number): number {
@@ -89,11 +91,11 @@ export function getSeasonalMultiplier(signal: CulturalSignal, month: number): nu
 
   for (const keyword of season.boostedKeywords) {
     if (text.includes(keyword)) {
-      return 1.25; // 25% seasonal affinity boost
+      return 1.25;
     }
   }
 
-  // Domain-level seasonal base factors
+  // Domain-level illustrative weights
   const dom = signal.entityType.toLowerCase();
   if (season.quarter === "Q3_Summer" && (dom.includes("destination") || dom.includes("artist"))) {
     return 1.15;
@@ -109,20 +111,15 @@ export function getSeasonalMultiplier(signal: CulturalSignal, month: number): nu
 }
 
 /**
- * Adjusts cultural signal affinities according to seasonal index trends.
- * Modifies affinity while retaining original raw audits.
+ * Attaches the illustrative seasonal weight to each signal. The Qloo affinity
+ * is left untouched so every displayed score is still the value Qloo returned.
  */
 export function applySeasonalMultipliers(
   signals: CulturalSignal[],
   month: number,
 ): CulturalSignal[] {
-  return signals.map((sig) => {
-    const mult = getSeasonalMultiplier(sig, month);
-    const adjustedAffinity = Number(Math.min(0.9999, Math.max(0.1, sig.affinity * mult)).toFixed(4));
-    return {
-      ...sig,
-      affinity: adjustedAffinity,
-    };
-  });
+  return signals.map((sig) => ({
+    ...sig,
+    seasonalMultiplier: getSeasonalMultiplier(sig, month),
+  }));
 }
-
