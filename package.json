@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test:qloo": "tsx --env-file=.env.local scripts/test-qloo.ts",
@@ -45,5 +45,11 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5"
+  },
+  "allowScripts": {
+    "@google/genai@2.28.0": true,
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.6": true,
+    "unrs-resolver@1.12.2": true
   }
 }
